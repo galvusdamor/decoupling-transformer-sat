@@ -23,6 +23,10 @@ class SATSearch : public SearchAlgorithm {
 	// index: timestep -> operator 
 	std::vector<std::vector<int>> operator_variables;
 	int get_fact_var(int time, FactProxy fact);
+	
+	// index: timestep -> variable
+	std::vector<std::vector<std::vector<int>>> axiom_variables;
+	int get_axiom_var(int time, int layer, FactProxy fact);
 
 	// variable -> value -> list of actions
 	std::vector<std::vector<std::vector<int>>> achiever;
