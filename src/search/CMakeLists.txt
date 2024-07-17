@@ -542,6 +542,24 @@ create_fast_downward_library(
 )
 
 create_fast_downward_library(
+    NAME sat_search
+	HELP "SAT search"
+    SOURCES
+        search_algorithms/sat_search
+    DEPENDENCY_ONLY
+)
+
+create_fast_downward_library(
+    NAME plugin_sat
+	HELP "SAT search"
+    SOURCES
+        search_algorithms/plugin_sat
+    DEPENDS
+        sat_search
+        search_common
+)
+
+create_fast_downward_library(
     NAME lp_solver
     HELP "Interface to an LP solver"
     SOURCES
