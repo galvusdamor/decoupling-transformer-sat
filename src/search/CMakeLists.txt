@@ -546,6 +546,7 @@ create_fast_downward_library(
 	HELP "SAT search"
     SOURCES
         search_algorithms/sat_search
+        search_algorithms/sat_encoder
     DEPENDENCY_ONLY
 )
 
@@ -586,6 +587,10 @@ if(USE_LP)
         target_compile_definitions(lp_solver INTERFACE HAS_SOPLEX)
         target_sources(lp_solver INTERFACE lp/soplex_solver_interface.h lp/soplex_solver_interface.cc)
     endif()
+endif()
+
+if(USE_SAT)
+	target_link_libraries(sat_search INTERFACE ipasircryptominisat5)
 endif()
 
 create_fast_downward_library(

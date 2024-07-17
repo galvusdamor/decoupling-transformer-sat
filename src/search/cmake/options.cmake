@@ -20,6 +20,12 @@ cause an error. This behavior can be overwritten by setting the \
 option USE_LP to false."
         TRUE)
 
+    option(
+		USE_SAT
+		"Compile with support for SAT solvers. Building is only possible \
+against a single SAT solver"
+        TRUE)
+
     if(USE_GLIBCXX_DEBUG AND USE_LP)
         message(
             FATAL_ERROR

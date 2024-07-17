@@ -8,6 +8,8 @@
 #include "../tasks/decoupled_root_task.h"
 #include "../task_utils/task_properties.h"
 
+#include "sat_encoder.h"
+#include "ipasir.h"
 
 using namespace std;
 
@@ -33,6 +35,30 @@ void SATSearch::print_statistics() const {
 SearchStatus SATSearch::step() {
    	log << "Step" << endl;
 
+	sat_capsule capsule;
+	reset_number_of_clauses();
+	void* solver = ipasir_init();
+
+	ipasir_add(solver,-1);
+	ipasir_add(solver,-2);
+	ipasir_add(solver,0);
+	
+	ipasir_add(solver,-3);
+	ipasir_add(solver,2);
+	ipasir_add(solver,0);
+	
+	ipasir_add(solver,3);
+	ipasir_add(solver,0);
+
+	int state = ipasir_solve(solver);
+	log << "SAT solver state: " << state << endl;
+	if (state == 10){
+		for (int v = 1; v <= 3; v++)
+			log << "V " << v << ": " << ipasir_val(solver,v) << endl; 
+
+		// if solver has success, we have solved the problem!
+		return SOLVED; 
+	}
 
 	if (planLength == currentLength) {
 		log << "Reached length limit" << endl;
