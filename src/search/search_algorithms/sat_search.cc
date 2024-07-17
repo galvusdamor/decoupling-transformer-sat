@@ -33,28 +33,49 @@ void SATSearch::print_statistics() const {
 }
 
 SearchStatus SATSearch::step() {
-   	log << "Step" << endl;
-
 	sat_capsule capsule;
 	reset_number_of_clauses();
 	void* solver = ipasir_init();
 
-	ipasir_add(solver,-1);
-	ipasir_add(solver,-2);
-	ipasir_add(solver,0);
-	
-	ipasir_add(solver,-3);
-	ipasir_add(solver,2);
-	ipasir_add(solver,0);
-	
-	ipasir_add(solver,3);
-	ipasir_add(solver,0);
+	log << "Building SAT formula for plan length " << currentLength << endl;
 
-	int state = ipasir_solve(solver);
-	log << "SAT solver state: " << state << endl;
-	if (state == 10){
-		for (int v = 1; v <= 3; v++)
-			log << "V " << v << ": " << ipasir_val(solver,v) << endl; 
+
+
+	// index: timestep -> variable -> value
+	vector<vector<vector<int>>> fact_variables(currentLength + 1);
+	// index: timestep -> operator 
+	vector<vector<int>> operator_variables(currentLength);
+
+
+	for (int time = 0; time < currentLength; time++){
+		for (size_t op = 0; op < task_proxy.get_operators().size(); op ++){
+			int opvar = capsule.new_variable();
+			operator_variables[time].push_back(opvar);
+			DEBUG(capsule.registerVariable(opvar,"op " + pad_int(op) + " @ " + pad_int(time) + " " + task_proxy.get_operators()[op].get_name()));
+		}
+	}
+
+	for (int time = 0; time <= currentLength; time++){
+		fact_variables[time].resize(task_proxy.get_variables().size());
+		for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+			VariableProxy varProxy = task_proxy.get_variables()[var];
+			for (size_t val = 0; val < varProxy.get_domain_size(); val++){
+				int factVar = capsule.new_variable();
+				fact_variables[time][var].push_back(factVar);
+				DEBUG(capsule.registerVariable(factVar,"fa " + pad_int(var) + "=" + pad_int(val) + " @ " + pad_int(time) + " " + varProxy.get_name() + "=" + varProxy.get_fact(val).get_name()));
+			}
+		}
+	}
+
+
+	DEBUG(capsule.printVariables());
+
+
+	int solverState = ipasir_solve(solver);
+	log << "SAT solver state: " << solverState << endl;
+	if (solverState == 10){
+		//for (int v = 1; v <= 3; v++)
+		//	log << "V " << v << ": " << ipasir_val(solver,v) << endl; 
 
 		// if solver has success, we have solved the problem!
 		return SOLVED; 
@@ -64,6 +85,9 @@ SearchStatus SATSearch::step() {
 		log << "Reached length limit" << endl;
 		return FAILED;
 	}
+	// increase length limit on the plan
+	// TODO add better strategies according to Rintanen
+	currentLength++;
     return IN_PROGRESS;
 }
 
