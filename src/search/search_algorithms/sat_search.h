@@ -11,11 +11,25 @@ namespace plugins {
 class Feature;
 }
 
+struct sat_capsule;
+
 namespace sat_search {
 class SATSearch : public SearchAlgorithm {
 	int planLength;
 	int currentLength;
 
+	// index: timestep -> variable -> value
+	std::vector<std::vector<std::vector<int>>> fact_variables;
+	// index: timestep -> operator 
+	std::vector<std::vector<int>> operator_variables;
+	int get_fact_var(int time, FactProxy fact);
+
+	// variable -> value -> list of actions
+	std::vector<std::vector<std::vector<int>>> achiever;
+	std::vector<std::vector<std::vector<int>>> deleter;
+
+	
+	void printVariableTruth(void* solver, sat_capsule & capsule);
 protected:
     virtual void initialize() override;
     virtual SearchStatus step() override;
