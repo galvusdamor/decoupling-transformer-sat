@@ -97,7 +97,7 @@ SearchStatus SATSearch::step() {
 	log << "Building SAT formula for plan length " << currentLength << endl;
 
 
-	int numberOfAxiomLayers = 10;
+	int numberOfAxiomLayers = 30;
 
 	////////////// 1. Generate all base variables (actions and facts)
 	fact_variables.clear();
@@ -199,7 +199,6 @@ SearchStatus SATSearch::step() {
 					
 					for (int required : conditions)
 						implies(solver,thisCausation,required);
-	
 				}
 
 				// adding effect	
@@ -399,6 +398,37 @@ SearchStatus SATSearch::step() {
 				}
 			}
 		}
+
+	    OperatorsProxy operators = task_proxy.get_operators();
+	    State cur = state_registry.get_initial_state();
+	    vector<State> visited_states;
+		visited_states.push_back(cur);
+	
+	    for (size_t i = 0; i < plan.size(); ++i) {
+	        cur = state_registry.get_successor_state(cur, operators[plan[i]]);
+	        visited_states.push_back(cur);
+	    }
+
+		//AxiomEvaluator &axiom_evaluator = g_axiom_evaluators[task_proxy];
+		for (size_t i = 0; i < visited_states.size(); ++i){
+			State & s = visited_states[i];
+			// TODO it seems that the state registry evaluates axioms for us
+    		//s.unpack();
+			//vector<int> upack = s.get_unpacked_values();
+			//axiom_evaluator.evaluate(upack);
+			//s = State(*task,move(upack));
+			s.unpack();
+
+			for (size_t j = 0; j < s.size(); ++j){
+				int var = get_fact_var(i,s[j]);
+				assert(ipasir_val(solver,var));
+			}
+		}
+    	
+		reverse(plan.begin(), plan.end());
+		reverse(visited_states.begin(), visited_states.end());
+		task->reconstruct_plan_if_necessary(plan,visited_states);
+		reverse(plan.begin(), plan.end());
     
 		set_plan(plan);
 		// if solver has success, we have solved the problem!
