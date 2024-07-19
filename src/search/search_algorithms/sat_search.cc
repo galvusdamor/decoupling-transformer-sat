@@ -1,6 +1,9 @@
+#include <iomanip>
 #include "sat_search.h"
 
 #include "../plugins/options.h"
+
+#include "../algorithms/sccs.h"
 
 #include "../utils/logging.h"
 
@@ -53,6 +56,224 @@ void SATSearch::initialize() {
 			}
 		}
 	}
+
+
+	for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+		VariableProxy varProxy = task_proxy.get_variables()[var];
+		if (!varProxy.is_derived()) continue;
+	}
+
+	vector<vector<int>> derived_implication(task_proxy.get_variables().size());
+	vector<vector<OperatorProxy>> achievers_per_derived(task_proxy.get_variables().size());
+
+	// building the derived predicate dependency graph
+	AxiomsProxy axioms = task_proxy.get_axioms();
+	for (size_t ax = 0; ax < axioms.size(); ax++){
+		OperatorProxy opProxy = axioms[ax];
+
+		// Effect
+		EffectsProxy effs = opProxy.get_effects();
+		assert(effs.size() == 1);
+		EffectProxy thisEff = effs[0];
+		assert(thisEff.get_fact().get_value() == 1);
+		assert(thisEff.get_fact().get_variable().is_derived());
+		int eff_var = thisEff.get_fact().get_variable().get_id();
+		achievers_per_derived[eff_var].push_back(opProxy);
+
+		// Preconditions
+		PreconditionsProxy precs = opProxy.get_preconditions();
+		vector<FactProxy> conds;
+	
+		for (size_t pre = 0; pre < precs.size(); pre++)
+			conds.push_back(precs[pre]);
+		
+		EffectConditionsProxy cond = thisEff.get_conditions();
+		for (size_t i = 0; i < cond.size(); i++)
+			conds.push_back(cond[i]);
+
+		for (FactProxy & fact : conds){
+			if (fact.get_variable().is_derived()){
+				// the variables that is changed will require value 0
+				if (fact.get_variable().get_id() == eff_var){
+					assert(fact.get_value() == 0);
+					continue;	
+				}
+
+				assert(fact.get_value() == 1);
+				int fact_var = fact.get_variable().get_id();
+				derived_implication[fact_var].push_back(eff_var);
+			}
+		}
+	}
+	vector<vector<int>> initial_derived_sccs = sccs::compute_maximal_sccs(derived_implication);
+	vector<vector<int>> derived_sccs;
+	for (vector<int> s : initial_derived_sccs){
+		if (s.size() == 1 && !task_proxy.get_variables()[s[0]].is_derived()) continue;
+		derived_sccs.push_back(s);
+		//log << "SCC of size " << s.size() << endl;
+	}
+	log << "Number of SCCs " << derived_sccs.size() << endl;
+
+
+	int sizeOneSCCs = 0;
+	int impliationSCCS = 0;
+	int oneFactSCCS = 0;
+	int oneVarSCCS = 0;
+	int oneFactSCCSInternal = 0;
+	int oneVarSCCSInternal = 0;
+	int problematicSCCS = 0;
+	for (vector<int> s : derived_sccs){
+		if (s.size() == 1){
+			sizeOneSCCs++;
+			continue;
+		}
+		set<int> sset(s.begin(), s.end());
+
+		// check if all internal edges are implications only
+		bool implicationOnly = true;
+		bool twoAntecedants = false;
+		FactProxy actualDependency(*task,0,0);
+		bool oneActualDependency = true;
+		int varDependency = -1;
+
+		FactProxy actualDependencyInternal(*task,0,0);
+		bool oneActualDependencyInternal = true;
+		int varDependencyInternal = -1;
+		for (int dp : s){
+			for (OperatorProxy opProxy : achievers_per_derived[dp]){
+				// effect
+				EffectsProxy effs = opProxy.get_effects();
+				assert(effs.size() == 1);
+				EffectProxy thisEff = effs[0];
+				assert(thisEff.get_fact().get_value() == 1);
+				assert(thisEff.get_fact().get_variable().is_derived());
+				int eff_var = thisEff.get_fact().get_variable().get_id();
+				// Preconditions
+				PreconditionsProxy precs = opProxy.get_preconditions();
+				vector<FactProxy> conds;
+	
+				for (size_t pre = 0; pre < precs.size(); pre++)
+					conds.push_back(precs[pre]);
+				
+				EffectConditionsProxy cond = thisEff.get_conditions();
+				for (size_t i = 0; i < cond.size(); i++)
+					conds.push_back(cond[i]);
+
+				int numDerived = 0;
+				bool hasActual = false;
+				FactProxy myActualDependency(*task,0,0);
+				bool myOneActualDependency = true;
+				int myVarDependency = -1;
+				for (FactProxy & fact : conds){
+					if (fact.get_variable().get_id() == eff_var) continue;
+					if (fact.get_variable().is_derived()){
+						// condition outside of this SCC
+						if (sset.count(fact.get_variable().get_id()) == 0) continue;
+						numDerived++;
+					} else {
+						hasActual = true;
+						if (myVarDependency == -1){
+							myVarDependency = fact.get_variable().get_id();
+							myActualDependency = fact;
+						} if (myVarDependency != fact.get_variable().get_id()){
+							myVarDependency = -2; // dependent on multiple variables
+						} else if (myActualDependency != fact){
+							myOneActualDependency = false;
+						}
+					}
+					if (!hasActual && numDerived == 1) continue;
+					if (hasActual && numDerived == 0) continue;
+					//log << "FAIL SCC with " << fact.get_variable().get_id() << " -> " << eff_var << endl;
+					implicationOnly = false;
+				}
+				if (myVarDependency != -1){
+					if (myVarDependency == -2){
+						varDependency = -2;
+						oneActualDependency = false;
+					} else if (myVarDependency != varDependency){
+						// no dependency known before
+						if (varDependency == -1){
+							varDependency = myVarDependency;
+							actualDependency = myActualDependency;
+						} else {
+							varDependency = -2;
+							oneActualDependency = false;
+						}
+					} else if (!myOneActualDependency || myActualDependency != actualDependency){
+						oneActualDependency = false;
+					}
+
+					if (numDerived){
+						if (myVarDependency == -2){
+							varDependencyInternal = -2;
+							oneActualDependencyInternal = false;
+						} else if (myVarDependency != varDependencyInternal){
+							// no dependency known before
+							if (varDependencyInternal == -1){
+								varDependencyInternal = myVarDependency;
+								actualDependencyInternal = myActualDependency;
+							} else {
+								varDependencyInternal = -2;
+								oneActualDependencyInternal = false;
+							}
+						} else if (!myOneActualDependency || myActualDependency != actualDependencyInternal){
+							oneActualDependencyInternal = false;
+						}
+					}
+				}
+				if (numDerived >= 2) twoAntecedants = true;
+			}
+		}
+
+		if (twoAntecedants){
+			log << "Problematic (2 antecedants) SCC of size " << s.size() << endl;
+			problematicSCCS++;
+			continue;
+		}
+
+		if (implicationOnly){
+			log << "Implication SCC of size " << s.size() << endl;
+			impliationSCCS++;
+			continue;
+		}
+
+		if (oneActualDependency){
+			log << "One fact dependency SCC of size " << s.size() << endl;
+			oneFactSCCS++;
+			continue;
+		}
+
+		if (oneActualDependencyInternal){
+			log << "One fact dependency internal SCC of size " << s.size() << endl;
+			oneFactSCCSInternal++;
+			continue;
+		}
+
+		if (varDependency != -2){
+			log << "One var dependency SCC of size " << s.size() << endl;
+			oneVarSCCS++;
+			continue;
+		}
+
+		if (varDependencyInternal != -2){
+			log << "One var dependency internal SCC of size " << s.size() << endl;
+			oneVarSCCSInternal++;
+			continue;
+		}
+
+		log << "Problematic SCC of size " << s.size() << endl;
+		log << "members:";
+		for (int d : sset) log << d << " ";
+		log << endl;
+		problematicSCCS++;
+	}
+	log << "Size 1 SCCS: " << sizeOneSCCs << endl;
+	log << "Implication SCCS: " << impliationSCCS << endl;
+	log << "OneFact SCCS: " << oneFactSCCS << endl;
+	log << "OneVar SCCS: " << oneVarSCCS << endl;
+	log << "OneFact SCCS: " << oneFactSCCSInternal << endl;
+	log << "OneVar SCCS: " << oneVarSCCSInternal << endl;
+	log << "Other SCCS: " << problematicSCCS << endl;
 }
 
 void SATSearch::print_statistics() const {
@@ -92,10 +313,15 @@ void SATSearch::printVariableTruth(void* solver, sat_capsule & capsule){
 SearchStatus SATSearch::step() {
 	sat_capsule capsule;
 	reset_number_of_clauses();
+	reset_number_of_clauses();
 	void* solver = ipasir_init();
 
 	log << "Building SAT formula for plan length " << currentLength << endl;
 
+	map<string,int> clauseCounter;
+	map<string,int> variableCounter;
+	int curClauseNumber = 0;
+#define registerClauses(NAME) clauseCounter[NAME] += get_number_of_clauses() - curClauseNumber; curClauseNumber = get_number_of_clauses();
 
 	int numberOfAxiomLayers = 30;
 
@@ -111,6 +337,7 @@ SearchStatus SATSearch::step() {
 		for (size_t op = 0; op < task_proxy.get_operators().size(); op ++){
 			int opvar = capsule.new_variable();
 			operator_variables[time].push_back(opvar);
+			variableCounter["operator"]++;
 			DEBUG(capsule.registerVariable(opvar,"op " + pad_int(op) + " @ " + pad_int(time) + " " + task_proxy.get_operators()[op].get_name()));
 		}
 	}
@@ -122,6 +349,7 @@ SearchStatus SATSearch::step() {
 			for (int val = 0; val < varProxy.get_domain_size(); val++){
 				int factVar = capsule.new_variable();
 				fact_variables[time][var].push_back(factVar);
+				variableCounter["facts"]++;
 				DEBUG(capsule.registerVariable(factVar,"fa " + pad_int(var) + "=" + pad_int(val) + " @ " + pad_int(time) + " " + varProxy.get_name() + "=" + varProxy.get_fact(val).get_name()));
 			}
 		}
@@ -138,6 +366,7 @@ SearchStatus SATSearch::step() {
 				assert(varProxy.get_domain_size() == 2);
 				
 				int factVar = capsule.new_variable();
+				variableCounter["axioms"]++;
 				axiom_variables[time][layer][var] = factVar;
 				DEBUG(capsule.registerVariable(factVar,"ax " + pad_int(var)+ " @ " + pad_int(time) + " / " + pad_int(layer) + " " + varProxy.get_name() + "=" + varProxy.get_fact(1).get_name()));
 				//DEBUG(capsule.registerVariable(factVar,"ax " + pad_int(var)+ " @ " + pad_int(time) + " / " + pad_int(layer)));
@@ -175,6 +404,7 @@ SearchStatus SATSearch::step() {
 				
 				implies(solver,opvar,fact_var);
 			}
+			registerClauses("preconditions");
 
 			// Effect
 			EffectsProxy effs = opProxy.get_effects();
@@ -195,10 +425,12 @@ SearchStatus SATSearch::step() {
 					thisCausation = opvar;
 				} else {
 					thisCausation = capsule.new_variable();
+					variableCounter["facts"]++;
 					DEBUG(capsule.registerVariable(thisCausation,"ce " + pad_int(op) + " " + pad_int(eff) +" @ " + pad_int(time)));
 					
 					for (int required : conditions)
 						implies(solver,thisCausation,required);
+					registerClauses("frame axioms effect causation");
 				}
 
 				// adding effect	
@@ -215,7 +447,7 @@ SearchStatus SATSearch::step() {
 					deleterVars[time][thisEff.get_fact().get_variable().get_id()]
 						[val].push_back(thisCausation);
 				}
-
+				registerClauses("effects");
 			}
 		}
 	}
@@ -244,6 +476,7 @@ SearchStatus SATSearch::step() {
 			}
 		}
 	}
+	registerClauses("frame axioms");
 
 	// 4. Evaluation of axioms
 	// assumption here is: the variables in fact_variables are the ones
@@ -255,6 +488,8 @@ SearchStatus SATSearch::step() {
 			if (task_proxy.get_variables()[var].is_derived()){
 				assertNot(solver,axiom_variables[time][0][var]);
 			}
+	
+		registerClauses("axioms initialisation");
 
 		// final value of the axioms implies their value for the next layer
 		for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
@@ -265,6 +500,7 @@ SearchStatus SATSearch::step() {
 				implies(solver,-axiom_variables[time][numberOfAxiomLayers][var],fact_variables[time][var][0]);
 			}
 		}
+		registerClauses("axioms finalisation");
 		
 		for (int layer = 0; layer < numberOfAxiomLayers; layer++){
 			vector<vector<int>> causeVariables (task_proxy.get_variables().size());
@@ -312,16 +548,20 @@ SearchStatus SATSearch::step() {
 				
 				
 				andImplies(solver,conditions,eff_fact_var);
+				registerClauses("axioms evaluation");
+
 
 				assert(conditions.size() > 0);
 				if (conditions.size() == 1){
 					causeVariables[eff_var].push_back(*conditions.begin());
 				} else {
 					int intermediateCausation = capsule.new_variable();
+					variableCounter["axiom causation"]++;
 					causeVariables[eff_var].push_back(intermediateCausation);
 					DEBUG(capsule.registerVariable(intermediateCausation,"ca " + pad_int(ax) + " @ " + pad_int(time) + " " + pad_int(layer)));
 					for (int required : conditions)
 						implies(solver, intermediateCausation, required);
+					registerClauses("axioms intermediate causation");
 				}
 			}
 
@@ -330,6 +570,7 @@ SearchStatus SATSearch::step() {
 					int eff_var = axiom_variables[time][layer+1][var];
 					impliesOr(solver,eff_var,causeVariables[var]);
 				}
+			registerClauses("axioms causation");
 		}
 	}
 
@@ -341,12 +582,14 @@ SearchStatus SATSearch::step() {
 		//if (init[i].get_variable().is_derived()) continue;
 		assertYes(solver,get_fact_var(0,init[i]));
 	}
+	registerClauses("init");
 
 	GoalsProxy goals = task_proxy.get_goals();
 	for (size_t i = 0; i < goals.size(); i++){
 		log << "GOAL " << goals[i].get_variable().get_id() << " " << goals[i].get_value() << " " << get_fact_var(currentLength,goals[i]) << endl;
 		assertYes(solver,get_fact_var(currentLength,goals[i]));
 	}
+	registerClauses("goal");
 	
 	// 6. State Mutexes
 	for (int time = 0; time <= currentLength; time++){
@@ -355,6 +598,7 @@ SearchStatus SATSearch::step() {
 			atLeastOne(solver,capsule,fact_variables[time][var]);
 		}
 	}
+	registerClauses("state mutexes");
 	
 	// 7. Action Control
 	// currently the most simple encoding: only one action at a time
@@ -362,9 +606,20 @@ SearchStatus SATSearch::step() {
 		atMostOne(solver,capsule,operator_variables[time]);
 		atLeastOne(solver,capsule,operator_variables[time]);
 	}
+	registerClauses("action control");
 
 
 	//DEBUG(capsule.printVariables());
+
+
+	// print variable and clause statistics
+	log << "Variables" << endl;
+	for (auto [a,b] : variableCounter)
+		log << setw(30) << setfill(' ') << a << ": " << setw(8) << setfill(' ') << b << endl;
+	log << "Clauses" << endl;
+	for (auto [a,b] : clauseCounter)
+		log << setw(30) << setfill(' ') << a << ": " << setw(8) << setfill(' ') << b << endl;
+
 
 
 	int solverState = ipasir_solve(solver);
