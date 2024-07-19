@@ -46,8 +46,8 @@ public:
     Log &operator<<(const T &elem) {
         if (!line_has_started) {
             line_has_started = true;
-            stream << "[t=" << std::setw(12) << g_timer << ", "
-                   << get_peak_memory_in_kb() << " KB] ";
+            stream << "[t=" << std::setw(9) << g_timer << ", "
+                   << std::setw(7) << get_peak_memory_in_kb() << " KB] ";
         }
 
         stream << elem;
