@@ -5,6 +5,7 @@
 #include "system.h"
 #include "timer.h"
 
+#include <iomanip>
 #include <memory>
 #include <ostream>
 #include <string>
@@ -45,7 +46,7 @@ public:
     Log &operator<<(const T &elem) {
         if (!line_has_started) {
             line_has_started = true;
-            stream << "[t=" << g_timer << ", "
+            stream << "[t=" << std::setw(12) << g_timer << ", "
                    << get_peak_memory_in_kb() << " KB] ";
         }
 
