@@ -117,6 +117,7 @@ def build(config_name, configure_parameters, build_parameters):
 def main():
     config_names = []
     build_parameters = []
+    configure_parameters = []
     for arg in sys.argv[1:]:
         if arg == "--help" or arg == "-h":
             print_usage()
@@ -125,6 +126,10 @@ def main():
             config_names.append(DEBUG_CONFIG_NAME)
         elif arg == "--all":
             config_names.extend(sorted(CONFIGS.keys()))
+        elif arg.startswith("-s"):
+            configure_parameters.append("-DSAT_DIR="+arg[2:])
+        elif arg == "--kissat":
+            configure_parameters.append("-DUSE_KISSAT=ON")
         elif arg in CONFIGS:
             config_names.append(arg)
         else:
@@ -132,7 +137,7 @@ def main():
     if not config_names:
         config_names.append(DEFAULT_CONFIG_NAME)
     for config_name in config_names:
-        build(config_name, CONFIGS[config_name], build_parameters)
+        build(config_name, CONFIGS[config_name] + configure_parameters, build_parameters)
 
 
 if __name__ == "__main__":

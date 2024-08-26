@@ -33,6 +33,10 @@
 
 cmake_minimum_required(VERSION 3.16)
 
+option(USE_KISSAT "Compile with the kissat SAT solver" OFF)
+message("Link dir: ${SAT_DIR}")
+link_directories(${SAT_DIR})
+
 # Path containing custom CMake modules
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 include(common_cxx_flags)
@@ -589,9 +593,21 @@ if(USE_LP)
     endif()
 endif()
 
-if(USE_SAT)
-	target_link_libraries(sat_search INTERFACE ipasircryptominisat5)
+if (USE_SAT)
+	if (USE_KISSAT)
+		message("Build against kissat")
+		target_sources(downward PRIVATE search_algorithms/kissat.h search_algorithms/kissat.cpp)
+		target_link_libraries(sat_search INTERFACE kissat)
+	else (USE_KISSAT)
+		message("Build against regular ipasir solver")
+		target_link_libraries(sat_search INTERFACE ipasircryptominisat5)
+	endif()
 endif()
+
+#If(USE_SAT)
+#	#target_link_libraries(sat_search INTERFACE ipasircryptominisat5)
+#	target_link_libraries(sat_search INTERFACE kissat)
+#Endif()
 
 create_fast_downward_library(
     NAME relaxation_heuristic
