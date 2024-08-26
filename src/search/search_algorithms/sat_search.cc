@@ -442,6 +442,78 @@ void SATSearch::initialize() {
 		}
 	
 	}
+
+
+	// We are trying to find variables that
+	// 1) Occur in all (or a lot of?) operators as effects
+	// 2) have only 2 values (true/false)
+	// 3) have an unconditional effect on them or a condition only on another variable that has only two values
+
+	set<int> nogoodVariables;
+
+	vector<map<pair<int,bool>, set<int>>> makingTrueOperators(task_proxy.get_variables().size());
+	vector<map<pair<int,bool>, set<int>>> makingFalseOperators(task_proxy.get_variables().size());
+
+	////// check for special types of conditional effects
+	for (size_t op = 0; op < task_proxy.get_operators().size(); op ++){
+		OperatorProxy opProxy = task_proxy.get_operators()[op];
+
+		// Effect
+		EffectsProxy effs = opProxy.get_effects();
+		for (size_t eff = 0; eff < effs.size(); eff++){
+			EffectProxy thisEff = effs[eff];
+			int effVar = thisEff.get_fact().get_variable().get_id();
+			if (thisEff.get_fact().get_variable().get_domain_size() > 2) {
+				nogoodVariables.insert(effVar);
+				continue; // not a good variable
+			}
+
+			// gather the conditions of the conditional effect 
+			EffectConditionsProxy cond = thisEff.get_conditions();
+			if (cond.size() > 1) {
+				nogoodVariables.insert(effVar);
+				continue; // not a good effect
+			}
+
+			int conditionVariable = -1; // no condition 
+			bool conditionState = true;
+			for (size_t i = 0; i < cond.size(); i++){
+				FactProxy condition = cond[i];
+				if (condition.get_variable().get_domain_size() > 2) {
+					nogoodVariables.insert(effVar);
+					continue; // not a good variable
+				}
+				conditionState = condition.get_value() == 1;
+				conditionVariable = condition.get_variable().get_id();
+			}
+
+			bool effectState = thisEff.get_fact().get_value() == 1;
+
+			if (effectState)
+				makingTrueOperators[effVar][{conditionVariable,conditionState}].insert(op);
+			else
+				makingFalseOperators[effVar][{conditionVariable,conditionState}].insert(op);
+		}
+	}
+
+	for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+		VariableProxy varProxy = task_proxy.get_variables()[var];
+		if (varProxy.is_derived()) continue;
+		if (nogoodVariables.count(var)) continue;
+		log << "Good variable: " << var << endl;
+		log << "+:" << endl;
+		for (auto [a,b] : makingTrueOperators[var]){
+			log << "\t" << a.first << " " << a.second << ":";
+			for (int i : b) log << " " << i;
+			log << endl;
+		}
+		log << "-:" << endl;
+		for (auto [a,b] : makingFalseOperators[var]){
+			log << "\t" << a.first << " " << a.second << ":";
+			for (int i : b) log << " " << i;
+			log << endl;
+		}
+	}
 }
 
 void SATSearch::print_statistics() const {
@@ -582,6 +654,8 @@ SearchStatus SATSearch::step() {
 
 
 	for (int time = 0; time < currentLength; time++){
+		map<FactPair, map<set<int>,vector<int>>> conditionBuffer;
+		map<FactPair, map<set<int>, int>> conditionVariable;
 		for (size_t op = 0; op < task_proxy.get_operators().size(); op ++){
 			int opvar = operator_variables[time][op];
 			OperatorProxy opProxy = task_proxy.get_operators()[op];
@@ -604,26 +678,36 @@ SearchStatus SATSearch::step() {
 
 				// gather the conditions of the conditional effect in a set (could be a vector ...)
 				set<int> conditions;
-				conditions.insert(opvar);
 				EffectConditionsProxy cond = thisEff.get_conditions();
 				for (size_t i = 0; i < cond.size(); i++)
 					conditions.insert(get_fact_var(time, cond[i]));
 
 				int thisCausation;
 
-				if (conditions.size() == 1){
+				if (conditions.size() == 0){
 					thisCausation = opvar;
 				} else {
-					thisCausation = capsule.new_variable();
-					variableCounter["facts"]++;
-					DEBUG(capsule.registerVariable(thisCausation,"ce " + pad_int(op) + " " + pad_int(eff) +" @ " + pad_int(time)));
-					
-					for (int required : conditions)
-						implies(solver,thisCausation,required);
-					registerClauses("frame axioms effect causation");
+					// operator that has exactly the same condition for the same effect
+					if (conditionBuffer[thisEff.get_fact().get_pair()].count(conditions)){
+						// reuse the causation variable
+						thisCausation = conditionVariable[thisEff.get_fact().get_pair()][conditions];
+						conditionBuffer[thisEff.get_fact().get_pair()][conditions].push_back(opvar);
+					} else { 
+						thisCausation = capsule.new_variable();
+						conditionVariable[thisEff.get_fact().get_pair()][conditions] = thisCausation;
+						conditionBuffer[thisEff.get_fact().get_pair()][conditions].push_back(opvar);
+						
+						variableCounter["facts"]++;
+						DEBUG(capsule.registerVariable(thisCausation,"ce " + pad_int(op) + " " + pad_int(eff) +" @ " + pad_int(time)));
+						
+						for (int required : conditions)
+							implies(solver,thisCausation,required);
+						registerClauses("frame axioms effect causation");
+					}
 				}
 
 				// adding effect	
+				conditions.insert(opvar);
 				andImplies(solver,conditions,eff_fact_var);
 				achieverVars[time][thisEff.get_fact().get_variable().get_id()]
 					[thisEff.get_fact().get_value()].push_back(thisCausation);
@@ -639,7 +723,16 @@ SearchStatus SATSearch::step() {
 				}
 				registerClauses("effects");
 			}
+			
 		}
+		// selectable operators for frame axioms
+		for (auto [fp, m] : conditionBuffer){
+			for (auto [con, opVars] : m){
+				int conditionVar = conditionVariable[fp][con];
+				impliesOr(solver,conditionVar,opVars);
+			}
+		}
+		registerClauses("frame axioms effect causation");
 	}
 
 	// 3. Frame axioms
