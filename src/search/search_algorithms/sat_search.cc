@@ -123,8 +123,12 @@ void SATSearch::initialize() {
 	int oneVarSCCSInternal = 0;
 	int problematicSCCS = 0;
 	for (vector<int> s : derived_sccs){
+		AxiomSCC thisSCC;
+		thisSCC.variables = s;
 		if (s.size() == 1){
 			sizeOneSCCs++;
+			thisSCC.sizeOne = true;
+			axiomSCCsInTopOrder.push_back(thisSCC);
 			continue;
 		}
 		set<int> sset(s.begin(), s.end());
@@ -166,11 +170,11 @@ void SATSearch::initialize() {
 				int myVarDependency = -1;
 				for (FactProxy & fact : conds){
 					if (fact.get_variable().get_id() == eff_var) continue;
-					if (fact.get_variable().is_derived()){
-						// condition outside of this SCC
-						if (sset.count(fact.get_variable().get_id()) == 0) continue;
+					if (fact.get_variable().is_derived() &&
+							sset.count(fact.get_variable().get_id())){
 						numDerived++;
 					} else {
+						// condition outside of this SCC or non-derived
 						hasActual = true;
 						if (myVarDependency == -1){
 							myVarDependency = fact.get_variable().get_id();
@@ -228,36 +232,53 @@ void SATSearch::initialize() {
 		if (twoAntecedants){
 			log << "Problematic (2 antecedants) SCC of size " << s.size() << endl;
 			problematicSCCS++;
+			thisSCC.fullComputationRequired = true;
+			thisSCC.numberOfAxiomLayers = thisSCC.variables.size() - 1;
+			axiomSCCsInTopOrder.push_back(thisSCC);
 			continue;
 		}
 
 		if (implicationOnly){
 			log << "Implication SCC of size " << s.size() << endl;
 			impliationSCCS++;
+			thisSCC.isOfImplicationType = true;
+			axiomSCCsInTopOrder.push_back(thisSCC);
 			continue;
 		}
 
 		if (oneActualDependency){
 			log << "One fact dependency SCC of size " << s.size() << endl;
 			oneFactSCCS++;
+			thisSCC.isDependentOnOneVariableInternally = true;
+			thisSCC.dependingVariable = varDependencyInternal;
+			axiomSCCsInTopOrder.push_back(thisSCC);
 			continue;
 		}
 
 		if (oneActualDependencyInternal){
 			log << "One fact dependency internal SCC of size " << s.size() << endl;
 			oneFactSCCSInternal++;
+			thisSCC.isDependentOnOneVariableInternally = true;
+			thisSCC.dependingVariable = varDependencyInternal;
+			axiomSCCsInTopOrder.push_back(thisSCC);
 			continue;
 		}
 
 		if (varDependency != -2){
 			log << "One var dependency SCC of size " << s.size() << endl;
 			oneVarSCCS++;
+			thisSCC.isDependentOnOneVariableInternally = true;
+			thisSCC.dependingVariable = varDependencyInternal;
+			axiomSCCsInTopOrder.push_back(thisSCC);
 			continue;
 		}
 
 		if (varDependencyInternal != -2){
 			log << "One var dependency internal SCC of size " << s.size() << endl;
 			oneVarSCCSInternal++;
+			thisSCC.isDependentOnOneVariableInternally = true;
+			thisSCC.dependingVariable = varDependencyInternal;
+			axiomSCCsInTopOrder.push_back(thisSCC);
 			continue;
 		}
 
@@ -271,9 +292,156 @@ void SATSearch::initialize() {
 	log << "Implication SCCS: " << impliationSCCS << endl;
 	log << "OneFact SCCS: " << oneFactSCCS << endl;
 	log << "OneVar SCCS: " << oneVarSCCS << endl;
-	log << "OneFact SCCS: " << oneFactSCCSInternal << endl;
-	log << "OneVar SCCS: " << oneVarSCCSInternal << endl;
+	log << "OneFact internal SCCS: " << oneFactSCCSInternal << endl;
+	log << "OneVar internal SCCS: " << oneVarSCCSInternal << endl;
 	log << "Other SCCS: " << problematicSCCS << endl;
+
+
+
+	// pre-process the axiom SCCs that can be handled specially
+	for (AxiomSCC &scc : axiomSCCsInTopOrder){
+		map<int,int> varsToOffset;
+		for (size_t varOffset = 0; varOffset < scc.variables.size(); varOffset++)
+			varsToOffset[scc.variables[varOffset]] = varOffset;
+
+		if (scc.isOfImplicationType){
+			log << "Pre Processing Implication Type SCC" << endl;
+
+			// run Floyd Warshall on the implications
+			vector<vector<bool>> reach (scc.variables.size());
+			for (size_t varOffset = 0; varOffset < scc.variables.size(); varOffset++){
+				reach[varOffset].resize(scc.variables.size());
+				reach[varOffset][varOffset] = true;
+				for (int implicated : derived_implication[scc.variables[varOffset]]){
+					if (varsToOffset.count(implicated))
+						reach[varOffset][varsToOffset[implicated]] = true;
+				}
+			}
+			
+			// compute transitive closure 
+			for (size_t k = 0; k < reach.size(); k++)
+				for (size_t i = 0; i < reach.size(); i++)
+					for (size_t j = 0; j < reach.size(); j++)
+						if (reach[i][k] && reach[k][j]) reach[i][j] = true;
+
+
+			scc.directTransitiveImplications.resize(scc.variables.size());
+			scc.directTransitiveCauses.resize(scc.variables.size());
+			for (size_t varOffset = 0; varOffset < reach.size(); varOffset++)
+				for (size_t varOffsetTo = 0; varOffsetTo < reach.size(); varOffsetTo++)
+					if (reach[varOffset][varOffsetTo]){
+						scc.directTransitiveImplications[varOffset].push_back(varOffsetTo);
+						scc.directTransitiveCauses[varOffsetTo].push_back(varOffset);
+					}
+			
+			//for (size_t varOffset = 0; varOffset < reach.size(); varOffset++){
+			//	log << "Variable " << scc.variables[varOffset] << " reaches:";
+			//	for (int offset : scc.directTransitiveImplications[varOffset])
+			//		log << " " << scc.variables[offset];
+			//	log << endl;
+			//}
+
+		} else if (scc.isDependentOnOneVariableInternally){
+			log << "Pre Processing One Variable Dependent SCC" << endl;
+			
+			VariableProxy varProxy = task_proxy.get_variables()[scc.dependingVariable];
+			scc.guardedTransitiveImplications.resize(varProxy.get_domain_size());
+			scc.guardedTransitiveCauses.resize(varProxy.get_domain_size());
+
+			for (int value = 0; value < varProxy.get_domain_size(); value++){
+				// run Floyd Warshall on the implications
+				vector<vector<bool>> reach (scc.variables.size());
+				for (size_t varOffset = 0; varOffset < scc.variables.size(); varOffset++){
+					reach[varOffset].resize(scc.variables.size());
+					reach[varOffset][varOffset] = true;
+				}
+				
+				for (size_t varOffsetTo = 0; varOffsetTo < scc.variables.size(); varOffsetTo++){
+					int variableTo = scc.variables[varOffsetTo];
+					for (OperatorProxy opProxy : achievers_per_derived[variableTo]){
+						// effect
+						EffectsProxy effs = opProxy.get_effects();
+						assert(effs.size() == 1);
+						EffectProxy thisEff = effs[0];
+						assert(thisEff.get_fact().get_value() == 1);
+						assert(thisEff.get_fact().get_variable().is_derived());
+						int eff_var = thisEff.get_fact().get_variable().get_id();
+						// Preconditions
+						PreconditionsProxy precs = opProxy.get_preconditions();
+						vector<FactProxy> conds;
+		
+						for (size_t pre = 0; pre < precs.size(); pre++)
+							conds.push_back(precs[pre]);
+						
+						EffectConditionsProxy cond = thisEff.get_conditions();
+						for (size_t i = 0; i < cond.size(); i++)
+							conds.push_back(cond[i]);
+	
+						int numDerived = 0;
+						FactProxy myActualDependency(*task,0,0);
+						int myVarDependency = -1;
+						int derivedDependency = -1;
+						for (FactProxy & fact : conds){
+							if (fact.get_variable().get_id() == eff_var) continue;
+							if (fact.get_variable().is_derived() &&
+									varsToOffset.count(fact.get_variable().get_id())){
+								numDerived++;
+								derivedDependency = fact.get_variable().get_id();
+							} else {
+								// condition outside of this SCC or non-derived
+								if (myVarDependency == -1){
+									myVarDependency = fact.get_variable().get_id();
+									myActualDependency = fact;
+								} if (myVarDependency != fact.get_variable().get_id()){
+									myVarDependency = -2; // dependent on multiple variables
+								} else if (myActualDependency != fact){
+									assert(false); // this cannot happen
+								}
+							}
+						}
+
+						// axiom that is not internal to the SCC, will be handled separately
+						if (numDerived == 0) continue; 
+						assert(myVarDependency != -2);
+						if (myVarDependency == -1){
+							// this is a simple implication without condition, so it is always reached
+							reach[varsToOffset[derivedDependency]][varOffsetTo] = true;
+						} else {
+							assert(myVarDependency == scc.dependingVariable);
+							// not the current value
+							if (value != myActualDependency.get_value()) continue;
+							reach[varsToOffset[derivedDependency]][varOffsetTo] = true;
+						}
+					}
+				}
+
+				
+				// compute transitive closure 
+				for (size_t k = 0; k < reach.size(); k++)
+					for (size_t i = 0; i < reach.size(); i++)
+						for (size_t j = 0; j < reach.size(); j++)
+							if (reach[i][k] && reach[k][j]) reach[i][j] = true;
+
+
+				scc.guardedTransitiveImplications[value].resize(scc.variables.size());
+				scc.guardedTransitiveCauses[value].resize(scc.variables.size());
+				for (size_t varOffset = 0; varOffset < reach.size(); varOffset++)
+					for (size_t varOffsetTo = 0; varOffsetTo < reach.size(); varOffsetTo++)
+						if (reach[varOffset][varOffsetTo]){
+							scc.guardedTransitiveImplications[value][varOffset].push_back(varOffsetTo);
+							scc.guardedTransitiveCauses[value][varOffsetTo].push_back(varOffset);
+						}
+				
+				//for (size_t varOffset = 0; varOffset < reach.size(); varOffset++){
+				//	log << "Variable " << scc.variables[varOffset] << " reaches with value " << value << ":";
+				//	for (int offset : scc.guardedTransitiveImplications[value][varOffset])
+				//		log << " " << scc.variables[offset];
+				//	log << endl;
+				//}
+			}
+		}
+	
+	}
 }
 
 void SATSearch::print_statistics() const {

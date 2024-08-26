@@ -14,6 +14,27 @@ class Feature;
 struct sat_capsule;
 
 namespace sat_search {
+
+struct AxiomSCC{
+	std::vector<int> variables;
+	bool sizeOne = false;
+	bool isOfImplicationType = false;
+	bool isDependentOnOneVariableInternally = false;
+	int dependingVariable = false;
+
+
+	bool fullComputationRequired = false;
+	int numberOfAxiomLayers;
+
+	// preprocessing information implications
+	std::vector<std::vector<int>> directTransitiveImplications;
+	std::vector<std::vector<int>> directTransitiveCauses;
+
+	// preprocessing information guarded implications (i.e. ones that depend on a variable value)
+	std::vector<std::vector<std::vector<int>>> guardedTransitiveImplications;
+	std::vector<std::vector<std::vector<int>>> guardedTransitiveCauses;
+};
+
 class SATSearch : public SearchAlgorithm {
 	int planLength;
 	int currentLength;
@@ -32,6 +53,8 @@ class SATSearch : public SearchAlgorithm {
 	std::vector<std::vector<std::vector<int>>> achiever;
 	std::vector<std::vector<std::vector<int>>> deleter;
 
+	// axiom SCCs
+	std::vector<AxiomSCC> axiomSCCsInTopOrder;
 	
 	void printVariableTruth(void* solver, sat_capsule & capsule);
 protected:
