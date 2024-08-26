@@ -48,6 +48,7 @@ class SATSearch : public SearchAlgorithm {
 	// index: timestep -> variable
 	std::vector<std::vector<std::vector<int>>> axiom_variables;
 	int get_axiom_var(int time, int layer, FactProxy fact);
+	int get_last_axiom_var(int time, FactProxy fact);
 
 	// variable -> value -> list of actions
 	std::vector<std::vector<std::vector<int>>> achiever;
@@ -55,6 +56,7 @@ class SATSearch : public SearchAlgorithm {
 
 	// axiom SCCs
 	std::vector<AxiomSCC> axiomSCCsInTopOrder;
+	std::vector<std::vector<OperatorProxy>> achievers_per_derived;
 	
 	void printVariableTruth(void* solver, sat_capsule & capsule);
 protected:

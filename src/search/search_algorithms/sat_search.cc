@@ -64,7 +64,7 @@ void SATSearch::initialize() {
 	}
 
 	vector<vector<int>> derived_implication(task_proxy.get_variables().size());
-	vector<vector<OperatorProxy>> achievers_per_derived(task_proxy.get_variables().size());
+	achievers_per_derived.resize(task_proxy.get_variables().size());
 
 	// building the derived predicate dependency graph
 	AxiomsProxy axioms = task_proxy.get_axioms();
@@ -233,7 +233,7 @@ void SATSearch::initialize() {
 			log << "Problematic (2 antecedants) SCC of size " << s.size() << endl;
 			problematicSCCS++;
 			thisSCC.fullComputationRequired = true;
-			thisSCC.numberOfAxiomLayers = thisSCC.variables.size() - 1;
+			thisSCC.numberOfAxiomLayers = thisSCC.variables.size();
 			axiomSCCsInTopOrder.push_back(thisSCC);
 			continue;
 		}
@@ -454,7 +454,12 @@ int SATSearch::get_fact_var(int time, FactProxy fact){
 
 int SATSearch::get_axiom_var(int time, int layer, FactProxy fact){
 	assert(fact.get_value() == 1);
-	return axiom_variables[time][layer][fact.get_variable().get_id()];
+	return axiom_variables[time][fact.get_variable().get_id()][layer];
+}
+
+int SATSearch::get_last_axiom_var(int time, FactProxy fact){
+	assert(fact.get_value() == 1);
+	return axiom_variables[time][fact.get_variable().get_id()].back();
 }
 
 
@@ -491,7 +496,24 @@ SearchStatus SATSearch::step() {
 	int curClauseNumber = 0;
 #define registerClauses(NAME) clauseCounter[NAME] += get_number_of_clauses() - curClauseNumber; curClauseNumber = get_number_of_clauses();
 
-	int numberOfAxiomLayers = 30;
+
+	map<int,int> numberOfAxiomLayerVariablesPerDerived;
+	for (AxiomSCC & scc : axiomSCCsInTopOrder){
+		if (scc.sizeOne) scc.numberOfAxiomLayers = 1;
+
+		// nasty case. We can't optimise here
+		if (scc.sizeOne || scc.fullComputationRequired){
+			for (int v : scc.variables)
+				numberOfAxiomLayerVariablesPerDerived[v] = scc.numberOfAxiomLayers;
+		} else {
+			for (int v : scc.variables)
+				numberOfAxiomLayerVariablesPerDerived[v] = 1;
+		}
+	}
+
+
+
+	//int numberOfAxiomLayers = 30;
 
 	////////////// 1. Generate all base variables (actions and facts)
 	fact_variables.clear();
@@ -524,10 +546,10 @@ SearchStatus SATSearch::step() {
 	}
 
 	for (int time = 0; time <= currentLength; time++){
-		axiom_variables[time].resize(numberOfAxiomLayers+1);
-		for (int layer = 0; layer <= numberOfAxiomLayers; layer++){
-			axiom_variables[time][layer].resize(task_proxy.get_variables().size());
-			for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+		axiom_variables[time].resize(task_proxy.get_variables().size());
+		for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+			axiom_variables[time][var].resize(numberOfAxiomLayerVariablesPerDerived[var] + 1);
+			for (int layer = 0; layer <= numberOfAxiomLayerVariablesPerDerived[var] + 1; layer++){
 				VariableProxy varProxy = task_proxy.get_variables()[var];
 				if (!varProxy.is_derived()) continue;
 				// variables from axioms must be "boolean"
@@ -535,7 +557,7 @@ SearchStatus SATSearch::step() {
 				
 				int factVar = capsule.new_variable();
 				variableCounter["axioms"]++;
-				axiom_variables[time][layer][var] = factVar;
+				axiom_variables[time][var][layer] = factVar;
 				DEBUG(capsule.registerVariable(factVar,"ax " + pad_int(var)+ " @ " + pad_int(time) + " / " + pad_int(layer) + " " + varProxy.get_name() + "=" + varProxy.get_fact(1).get_name()));
 				//DEBUG(capsule.registerVariable(factVar,"ax " + pad_int(var)+ " @ " + pad_int(time) + " / " + pad_int(layer)));
 			}
@@ -651,94 +673,246 @@ SearchStatus SATSearch::step() {
 	// that are supposed to be used for preconditions
 	AxiomsProxy axioms = task_proxy.get_axioms();
 	for (int time = 0; time <= currentLength; time++){
-		// initially all axioms are false
-		for (size_t var = 0; var < task_proxy.get_variables().size(); var++)
-			if (task_proxy.get_variables()[var].is_derived()){
-				assertNot(solver,axiom_variables[time][0][var]);
-			}
-	
-		registerClauses("axioms initialisation");
 
 		// final value of the axioms implies their value for the next layer
 		for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
 			if (task_proxy.get_variables()[var].is_derived()){
 				// if axiom evaluates to true, its value 1 is the correct one
-				implies(solver,axiom_variables[time][numberOfAxiomLayers][var],fact_variables[time][var][1]);
+				implies(solver,axiom_variables[time][var].back(),fact_variables[time][var][1]);
 				// if axiom evaluates to false, its value 0 is the correct one
-				implies(solver,-axiom_variables[time][numberOfAxiomLayers][var],fact_variables[time][var][0]);
+				implies(solver,-axiom_variables[time][var].back(),fact_variables[time][var][0]);
 			}
 		}
 		registerClauses("axioms finalisation");
-		
-		for (int layer = 0; layer < numberOfAxiomLayers; layer++){
-			vector<vector<int>> causeVariables (task_proxy.get_variables().size());
-			for (size_t ax = 0; ax < axioms.size(); ax++){
-				OperatorProxy opProxy = axioms[ax];
 
-				// Effect
-				EffectsProxy effs = opProxy.get_effects();
-				assert(effs.size() == 1);
-				EffectProxy thisEff = effs[0];
-				assert(thisEff.get_fact().get_value() == 1);
-				assert(thisEff.get_fact().get_variable().is_derived());
-				int eff_var = thisEff.get_fact().get_variable().get_id();
-				int eff_fact_var = get_axiom_var(time,layer+1,thisEff.get_fact());
 
-				set<int> conditions;
-				// Preconditions
-				PreconditionsProxy precs = opProxy.get_preconditions();
-				vector<FactProxy> conds;
-			
-				for (size_t pre = 0; pre < precs.size(); pre++)
-					conds.push_back(precs[pre]);
-				
-				EffectConditionsProxy cond = thisEff.get_conditions();
-				for (size_t i = 0; i < cond.size(); i++)
-					conds.push_back(cond[i]);
+		// actual evaluation of axioms
 
-				for (FactProxy & fact : conds){
-					// TODO stratification!
-					if (fact.get_variable().is_derived()){
-						// the variables that is changed will require value 0
-						if (fact.get_variable().get_id() == eff_var){
-							assert(fact.get_value() == 0);
-							continue;	
+		for (AxiomSCC & scc : axiomSCCsInTopOrder){
+			set<int> sset(scc.variables.begin(), scc.variables.end());
+			if (scc.sizeOne) scc.numberOfAxiomLayers = 1;
+
+			// nasty case. We can't optimise here
+			if (scc.sizeOne || scc.fullComputationRequired){
+				// initially all axioms are false
+				for (int var : scc.variables)
+					if (task_proxy.get_variables()[var].is_derived()){
+						assertNot(solver,axiom_variables[time][var][0]);
+					}
+				registerClauses("axioms initialisation");
+
+				for (int layer = 0; layer < scc.numberOfAxiomLayers; layer++){
+					vector<vector<int>> causeVariables (task_proxy.get_variables().size());
+					for (int sccvar : scc.variables){
+						for (OperatorProxy opProxy : achievers_per_derived[sccvar]){
+
+							// Effect
+							EffectsProxy effs = opProxy.get_effects();
+							assert(effs.size() == 1);
+							EffectProxy thisEff = effs[0];
+							assert(thisEff.get_fact().get_value() == 1);
+							assert(thisEff.get_fact().get_variable().is_derived());
+							int eff_var = thisEff.get_fact().get_variable().get_id();
+							int eff_fact_var = get_axiom_var(time,layer+1,thisEff.get_fact());
+
+							set<int> conditions;
+							// Preconditions
+							PreconditionsProxy precs = opProxy.get_preconditions();
+							vector<FactProxy> conds;
+						
+							for (size_t pre = 0; pre < precs.size(); pre++)
+								conds.push_back(precs[pre]);
+							
+							EffectConditionsProxy cond = thisEff.get_conditions();
+							for (size_t i = 0; i < cond.size(); i++)
+								conds.push_back(cond[i]);
+
+							for (FactProxy & fact : conds){
+								if (fact.get_variable().is_derived()){
+									// the variables that is changed will require value 0
+									if (fact.get_variable().get_id() == eff_var){
+										assert(fact.get_value() == 0);
+										continue;	
+									}
+
+									assert(fact.get_value() == 1);
+									int fact_var;
+									if (sset.count(fact.get_variable().get_id()))
+										fact_var = get_axiom_var(time,layer,fact);
+									else
+										fact_var = get_last_axiom_var(time,fact);
+									conditions.insert(fact_var);
+								} else {
+									int fact_var = get_fact_var(time,fact);
+									conditions.insert(fact_var);
+								}
+							}
+							
+							
+							andImplies(solver,conditions,eff_fact_var);
+							registerClauses("axioms evaluation");
+
+
+							assert(conditions.size() > 0);
+							if (conditions.size() == 1){
+								causeVariables[eff_var].push_back(*conditions.begin());
+							} else {
+								int intermediateCausation = capsule.new_variable();
+								variableCounter["axiom causation"]++;
+								causeVariables[eff_var].push_back(intermediateCausation);
+								DEBUG(capsule.registerVariable(intermediateCausation,"ca " + pad_int(opProxy.get_id()) + " @ " + pad_int(time) + " " + pad_int(layer)));
+								for (int required : conditions)
+									implies(solver, intermediateCausation, required);
+								registerClauses("axioms intermediate causation");
+							}
 						}
 
-						assert(fact.get_value() == 1);
-						int fact_var = get_axiom_var(time,layer,fact);
-						conditions.insert(fact_var);
-					} else {
-						int fact_var = get_fact_var(time,fact);
-						conditions.insert(fact_var);
+						for (int var : scc.variables)
+							if (task_proxy.get_variables()[var].is_derived()){
+								int eff_var = axiom_variables[time][var][layer+1];
+								impliesOr(solver,eff_var,causeVariables[var]);
+							}
+						registerClauses("axioms causation");
 					}
 				}
+			} else if (scc.isOfImplicationType || scc.isDependentOnOneVariableInternally){
+				// implication type or one-dependent SCCs can be evaluated in two steps
+				// 1. We need to correctly determine the values coming into the SCC
 				
-				
-				andImplies(solver,conditions,eff_fact_var);
-				registerClauses("axioms evaluation");
+				vector<vector<int>> causeVariablesLayer0 (task_proxy.get_variables().size());
+				for (int sccvar : scc.variables){
+					for (OperatorProxy opProxy : achievers_per_derived[sccvar]){
 
+						// Effect
+						EffectsProxy effs = opProxy.get_effects();
+						assert(effs.size() == 1);
+						EffectProxy thisEff = effs[0];
+						assert(thisEff.get_fact().get_value() == 1);
+						assert(thisEff.get_fact().get_variable().is_derived());
+						int eff_var = thisEff.get_fact().get_variable().get_id();
+						int eff_fact_var = get_axiom_var(time,0,thisEff.get_fact());
 
-				assert(conditions.size() > 0);
-				if (conditions.size() == 1){
-					causeVariables[eff_var].push_back(*conditions.begin());
-				} else {
-					int intermediateCausation = capsule.new_variable();
-					variableCounter["axiom causation"]++;
-					causeVariables[eff_var].push_back(intermediateCausation);
-					DEBUG(capsule.registerVariable(intermediateCausation,"ca " + pad_int(ax) + " @ " + pad_int(time) + " " + pad_int(layer)));
-					for (int required : conditions)
-						implies(solver, intermediateCausation, required);
-					registerClauses("axioms intermediate causation");
+						set<int> conditions;
+						// Preconditions
+						PreconditionsProxy precs = opProxy.get_preconditions();
+						vector<FactProxy> conds;
+					
+						for (size_t pre = 0; pre < precs.size(); pre++)
+							conds.push_back(precs[pre]);
+						
+						EffectConditionsProxy cond = thisEff.get_conditions();
+						for (size_t i = 0; i < cond.size(); i++)
+							conds.push_back(cond[i]);
+
+						// check whether the axiom is internal to the SCC
+						bool internalAxiom = false;
+						for (FactProxy & fact : conds){
+							if (fact.get_variable().is_derived()){
+								// the variables that is changed will require value 0
+								if (fact.get_variable().get_id() == eff_var){
+									assert(fact.get_value() == 0);
+									continue;	
+								}
+
+								assert(fact.get_value() == 1);
+								int fact_var;
+								if (sset.count(fact.get_variable().get_id()))
+									internalAxiom = true;
+								else
+									fact_var = get_last_axiom_var(time,fact);
+								conditions.insert(fact_var);
+							} else {
+								int fact_var = get_fact_var(time,fact);
+								conditions.insert(fact_var);
+							}
+						}
+
+						// internal axioms cannot make facts at layer 0 true.
+						if (internalAxiom) continue;
+						
+						andImplies(solver,conditions,eff_fact_var);
+						registerClauses("axioms evaluation");
+
+						assert(conditions.size() > 0);
+						if (conditions.size() == 1){
+							causeVariablesLayer0[eff_var].push_back(*conditions.begin());
+						} else {
+							int intermediateCausation = capsule.new_variable();
+							variableCounter["axiom causation"]++;
+							causeVariablesLayer0[eff_var].push_back(intermediateCausation);
+							DEBUG(capsule.registerVariable(intermediateCausation,"ca " + pad_int(opProxy.get_id()) + " @ " + pad_int(time) + " " + pad_int(0)));
+							for (int required : conditions)
+								implies(solver, intermediateCausation, required);
+							registerClauses("axioms intermediate causation");
+						}
+					}
 				}
+
+				for (int var : scc.variables)
+					if (task_proxy.get_variables()[var].is_derived()){
+						int eff_var = axiom_variables[time][var][0];
+						impliesOr(solver,eff_var,causeVariablesLayer0[var]);
+					}
+				registerClauses("axioms causation");
+
+
+				// 2. Internal work
+				if (scc.isOfImplicationType) {
+					for (size_t varOffset = 0; varOffset < scc.variables.size(); varOffset++){
+						int var = scc.variables[varOffset];
+						for (size_t varOffsetTo : scc.directTransitiveImplications[varOffset]){
+							int varTo = scc.variables[varOffsetTo];
+							implies(solver,axiom_variables[time][var][0], axiom_variables[time][varTo][1]);
+						}
+					}
+					registerClauses("axioms evaluation");
+
+					for (size_t varOffsetTo = 0; varOffsetTo < scc.variables.size(); varOffsetTo++){
+						int varTo = scc.variables[varOffsetTo];
+						vector<int> causeVariables;
+						for (size_t varOffset : scc.directTransitiveCauses[varOffsetTo]){
+							int var = scc.variables[varOffset];
+							causeVariables.push_back(axiom_variables[time][var][0]);
+						}
+						impliesOr(solver,axiom_variables[time][varTo][1], causeVariables);
+					}
+					registerClauses("axioms causation");
+
+
+				} else if (scc.isDependentOnOneVariableInternally){
+					VariableProxy varProxy = task_proxy.get_variables()[scc.dependingVariable];
+					// iterate over the possible values of the variable and implement the pattern for each one
+					for (int value = 0; value < varProxy.get_domain_size(); value++){
+						for (size_t varOffset = 0; varOffset < scc.variables.size(); varOffset++){
+							int var = scc.variables[varOffset];
+							for (size_t varOffsetTo : scc.guardedTransitiveImplications[value][varOffset]){
+								int varTo = scc.variables[varOffsetTo];
+								// if initial value and dependent one -> final value
+								impliesAnd(solver,axiom_variables[time][var][0],
+											fact_variables[time][scc.dependingVariable][value],
+											axiom_variables[time][varTo][1]);
+							}
+						}
+						registerClauses("axioms evaluation");
+
+						for (size_t varOffsetTo = 0; varOffsetTo < scc.variables.size(); varOffsetTo++){
+							int varTo = scc.variables[varOffsetTo];
+							vector<int> causeVariables;
+							for (size_t varOffset : scc.guardedTransitiveCauses[value][varOffsetTo]){
+								int var = scc.variables[varOffset];
+								causeVariables.push_back(axiom_variables[time][var][0]);
+							}
+							andImpliesOr(solver,axiom_variables[time][varTo][1],
+									fact_variables[time][scc.dependingVariable][value],
+									causeVariables);
+						}
+						registerClauses("axioms causation");
+
+					}
+				}	
+			} else {
+				assert(false); // the SCC must have *some* type
 			}
-
-			for (size_t var = 0; var < task_proxy.get_variables().size(); var++)
-				if (task_proxy.get_variables()[var].is_derived()){
-					int eff_var = axiom_variables[time][layer+1][var];
-					impliesOr(solver,eff_var,causeVariables[var]);
-				}
-			registerClauses("axioms causation");
 		}
 	}
 
@@ -781,10 +955,10 @@ SearchStatus SATSearch::step() {
 
 
 	// print variable and clause statistics
-	log << "Variables" << endl;
+	log << "Variables" << setw(23) << setfill(' ') << "total: " << setw(8) << setfill(' ') << capsule.number_of_variables << endl;
 	for (auto [a,b] : variableCounter)
 		log << setw(30) << setfill(' ') << a << ": " << setw(8) << setfill(' ') << b << endl;
-	log << "Clauses" << endl;
+	log << "Clauses" << setw(25) << setfill(' ') << "total: " << setw(8) << setfill(' ') << get_number_of_clauses() << endl;
 	for (auto [a,b] : clauseCounter)
 		log << setw(30) << setfill(' ') << a << ": " << setw(8) << setfill(' ') << b << endl;
 
