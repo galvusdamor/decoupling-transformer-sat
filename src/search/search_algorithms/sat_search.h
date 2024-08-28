@@ -38,6 +38,9 @@ struct AxiomSCC{
 class SATSearch : public SearchAlgorithm {
 	int planLength;
 	int currentLength;
+	int lengthIteration;
+	int startLength;
+	double multiplier;
 
 	// index: timestep -> variable -> value
 	std::vector<std::vector<std::vector<int>>> fact_variables;

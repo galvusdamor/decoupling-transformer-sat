@@ -1,3 +1,4 @@
+#include <cmath>
 #include <iomanip>
 #include "sat_search.h"
 
@@ -19,10 +20,18 @@ using namespace std;
 namespace sat_search {
 SATSearch::SATSearch(const plugins::Options &opts)
     : SearchAlgorithm(opts),
-	planLength(opts.get<int>("plan_length")){
+	planLength(opts.get<int>("plan_length")),
+	lengthIteration(opts.get<int>("length_iteration")),
+	startLength(opts.get<int>("start_length")),
+	multiplier(opts.get<double>("multiplier"))
+	{
 	
 	currentLength = 1;
 	if (planLength != -1) currentLength = planLength;
+
+	if (lengthIteration != -1){
+		currentLength = planLength = int(0.5 + startLength * pow(multiplier, lengthIteration));
+	}
 }
 
 void SATSearch::initialize() {

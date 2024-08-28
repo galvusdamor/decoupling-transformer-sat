@@ -16,7 +16,19 @@ public:
             "plan_length",
             "run the search for a single plan length only. -1 if length should not be fixed.",
             "-1");
-        sat_search::add_options_to_feature(*this);
+		add_option<int>(
+            "length_iteration",
+            "run the search for a single plan length only. -1 if length should not be fixed. This options run's Rintanen's algorithm C in the round specified by length_iteration",
+            "-1");
+   		add_option<int>(
+            "start_length",
+            "only if length_iteration != -1. Start value for C.",
+            "5");
+   		add_option<double>(
+            "multiplier",
+            "only if length_iteration != -1. Multiplier for C.",
+            "1.41");
+     sat_search::add_options_to_feature(*this);
     }
 };
 
