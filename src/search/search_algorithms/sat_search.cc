@@ -848,7 +848,7 @@ SearchStatus SATSearch::step() {
 							}
 							
 							
-							//andImplies(solver,conditions,eff_fact_var);
+							andImplies(solver,conditions,eff_fact_var);
 							registerClauses("axioms evaluation");
 
 
