@@ -287,6 +287,10 @@ void SATSearch::initialize() {
 		for (int d : sset) log << d << " ";
 		log << endl;
 		problematicSCCS++;
+		
+		thisSCC.fullComputationRequired = true;
+		thisSCC.numberOfAxiomLayers = thisSCC.variables.size();
+		axiomSCCsInTopOrder.push_back(thisSCC);
 	}
 	log << "Size 1 SCCS: " << sizeOneSCCs << endl;
 	log << "Implication SCCS: " << impliationSCCS << endl;
@@ -575,8 +579,9 @@ SearchStatus SATSearch::step() {
 
 		// nasty case. We can't optimise here
 		if (scc.sizeOne || scc.fullComputationRequired){
-			for (int v : scc.variables)
+			for (int v : scc.variables){
 				numberOfAxiomLayerVariablesPerDerived[v] = scc.numberOfAxiomLayers;
+			}
 		} else {
 			for (int v : scc.variables)
 				numberOfAxiomLayerVariablesPerDerived[v] = 1;
@@ -620,10 +625,11 @@ SearchStatus SATSearch::step() {
 	for (int time = 0; time <= currentLength; time++){
 		axiom_variables[time].resize(task_proxy.get_variables().size());
 		for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+			VariableProxy varProxy = task_proxy.get_variables()[var];
+			if (!varProxy.is_derived()) continue;
+
 			axiom_variables[time][var].resize(numberOfAxiomLayerVariablesPerDerived[var] + 1);
-			for (int layer = 0; layer <= numberOfAxiomLayerVariablesPerDerived[var] + 1; layer++){
-				VariableProxy varProxy = task_proxy.get_variables()[var];
-				if (!varProxy.is_derived()) continue;
+			for (int layer = 0; layer <= numberOfAxiomLayerVariablesPerDerived[var]; layer++){
 				// variables from axioms must be "boolean"
 				assert(varProxy.get_domain_size() == 2);
 				
@@ -842,7 +848,7 @@ SearchStatus SATSearch::step() {
 							}
 							
 							
-							andImplies(solver,conditions,eff_fact_var);
+							//andImplies(solver,conditions,eff_fact_var);
 							registerClauses("axioms evaluation");
 
 
@@ -859,14 +865,16 @@ SearchStatus SATSearch::step() {
 								registerClauses("axioms intermediate causation");
 							}
 						}
-
-						for (int var : scc.variables)
-							if (task_proxy.get_variables()[var].is_derived()){
-								int eff_var = axiom_variables[time][var][layer+1];
-								impliesOr(solver,eff_var,causeVariables[var]);
-							}
-						registerClauses("axioms causation");
 					}
+
+					for (int var : scc.variables){
+						assert(task_proxy.get_variables()[var].is_derived());
+						assert(axiom_variables[time][var].size() > layer+1);
+						int eff_var = axiom_variables[time][var][layer+1];
+						impliesOr(solver,eff_var,causeVariables[var]);
+						assert(causeVariables[var].size());
+					}
+					registerClauses("axioms causation");
 				}
 			} else if (scc.isOfImplicationType || scc.isDependentOnOneVariableInternally){
 				// implication type or one-dependent SCCs can be evaluated in two steps
@@ -1021,8 +1029,14 @@ SearchStatus SATSearch::step() {
 
 	GoalsProxy goals = task_proxy.get_goals();
 	for (size_t i = 0; i < goals.size(); i++){
-		log << "GOAL " << goals[i].get_variable().get_id() << " " << goals[i].get_value() << " " << get_fact_var(currentLength,goals[i]) << endl;
-		assertYes(solver,get_fact_var(currentLength,goals[i]));
+		if (goals[i].get_variable().is_derived()){
+			log << "Derived GOAL " << goals[i].get_variable().get_id() << " " << goals[i].get_value() << " " << get_last_axiom_var(currentLength,goals[i]) << endl;
+			assertYes(solver,get_last_axiom_var(currentLength,goals[i]));
+		
+		} else {
+			log << "Regular GOAL " << goals[i].get_variable().get_id() << " " << goals[i].get_value() << " " << get_fact_var(currentLength,goals[i]) << endl;
+			assertYes(solver,get_fact_var(currentLength,goals[i]));
+		}
 	}
 	registerClauses("goal");
 	
@@ -1039,7 +1053,7 @@ SearchStatus SATSearch::step() {
 	// currently the most simple encoding: only one action at a time
 	for (int time = 0; time < currentLength; time++){
 		atMostOne(solver,capsule,operator_variables[time]);
-		atLeastOne(solver,capsule,operator_variables[time]);
+		//atLeastOne(solver,capsule,operator_variables[time]);
 	}
 	registerClauses("action control");
 
@@ -1076,18 +1090,18 @@ SearchStatus SATSearch::step() {
 			}
 		}
     
-		for (int time = 0; time <= currentLength; time++){
-			for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
-				if (var >= 2) continue;
-				VariableProxy varProxy = task_proxy.get_variables()[var];
-				for (int val = 0; val < varProxy.get_domain_size(); val++){
-					int factVar = fact_variables[time][var][val];
-					if (ipasir_val(solver,factVar) > 0){
-						log << "time " << time << " " <<varProxy.get_name() << "=" <<  varProxy.get_fact(val).get_name() << endl;
-					}
-				}
-			}
-		}
+		//for(int time = 0; time <= currentLength; time++){
+		//	for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+		//		if (var >= 2) continue;
+		//		VariableProxy varProxy = task_proxy.get_variables()[var];
+		//		for (int val = 0; val < varProxy.get_domain_size(); val++){
+		//			int factVar = fact_variables[time][var][val];
+		//			if (ipasir_val(solver,factVar) > 0){
+		//				log << "time " << time << " " <<varProxy.get_name() << "=" <<  varProxy.get_fact(val).get_name() << endl;
+		//			}
+		//		}
+		//	}
+		//}
 
 	    OperatorsProxy operators = task_proxy.get_operators();
 	    State cur = state_registry.get_initial_state();

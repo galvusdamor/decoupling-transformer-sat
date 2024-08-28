@@ -111,18 +111,25 @@ void impliesNot(void* solver, int i, int j){
 }
 
 void impliesOr(void* solver, int i, std::vector<int> & j){
+	assert(i);
 	ipasir_add(solver,-i);
-	for (int & x : j)
+	for (int & x : j){
+		assert(x);
 		ipasir_add(solver,x);
+	}
 	ipasir_add(solver,0);
 	number_of_clauses++;
 }
 
 void andImpliesOr(void* solver, int i, int j, std::vector<int> & k){
+	assert(i);
 	ipasir_add(solver,-i);
+	assert(j);
 	ipasir_add(solver,-j);
-	for (int & x : k)
+	for (int & x : k){
+		assert(x);
 		ipasir_add(solver,x);
+	}
 	ipasir_add(solver,0);
 	number_of_clauses++;
 }
