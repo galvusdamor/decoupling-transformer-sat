@@ -42,6 +42,8 @@ class SATSearch : public SearchAlgorithm {
 	int startLength;
 	double multiplier;
 
+	bool forceAtLeastOneAction;
+
 	// index: timestep -> variable -> value
 	std::vector<std::vector<std::vector<int>>> fact_variables;
 	// index: timestep -> operator 

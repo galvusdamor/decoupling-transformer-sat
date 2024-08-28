@@ -25,12 +25,15 @@ SATSearch::SATSearch(const plugins::Options &opts)
 	startLength(opts.get<int>("start_length")),
 	multiplier(opts.get<double>("multiplier"))
 	{
+
+	forceAtLeastOneAction = true;
 	
 	currentLength = 1;
 	if (planLength != -1) currentLength = planLength;
 
 	if (lengthIteration != -1){
 		currentLength = planLength = int(0.5 + startLength * pow(multiplier, lengthIteration));
+		forceAtLeastOneAction = false;
 	}
 }
 
@@ -1059,7 +1062,7 @@ SearchStatus SATSearch::step() {
 	for (int time = 0; time <= currentLength; time++){
 		for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
 			atMostOne(solver,capsule,fact_variables[time][var]);
-			atLeastOne(solver,capsule,fact_variables[time][var]);
+			if (forceAtLeastOneAction) atLeastOne(solver,capsule,fact_variables[time][var]);
 		}
 	}
 	registerClauses("state mutexes");
