@@ -666,11 +666,14 @@ SearchStatus SATSearch::step() {
 			int opvar = operator_variables[time][op];
 			OperatorProxy opProxy = task_proxy.get_operators()[op];
 
+			map<int,int> preMap;
+
 			// Preconditions
 			PreconditionsProxy precs = opProxy.get_preconditions();
 			for (size_t pre = 0; pre < precs.size(); pre++){
 				FactProxy fact = precs[pre];
 				int fact_var = get_fact_var(time,fact);
+				preMap[fact.get_variable().get_id()] = fact.get_value();
 				
 				implies(solver,opvar,fact_var);
 			}
@@ -721,6 +724,9 @@ SearchStatus SATSearch::step() {
 				// implicit deleting effects, i.e. delete any value of the variable that is set
 				for (int val = 0; val < thisEff.get_fact().get_variable().get_domain_size(); val++){
 					if (val == thisEff.get_fact().get_value()) continue;
+					if (preMap.count(thisEff.get_fact().get_variable().get_id()) &&
+						preMap[thisEff.get_fact().get_variable().get_id()] != val)
+						continue;
 			
 					int deletedFact = fact_variables[time+1][thisEff.get_fact().get_variable().get_id()][val];
 					andImplies(solver,conditions,-deletedFact);
