@@ -1053,7 +1053,7 @@ SearchStatus SATSearch::step() {
 	// currently the most simple encoding: only one action at a time
 	for (int time = 0; time < currentLength; time++){
 		atMostOne(solver,capsule,operator_variables[time]);
-		//atLeastOne(solver,capsule,operator_variables[time]);
+		atLeastOne(solver,capsule,operator_variables[time]);
 	}
 	registerClauses("action control");
 
