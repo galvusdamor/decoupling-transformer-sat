@@ -530,7 +530,125 @@ void SATSearch::initialize() {
 	//		log << endl;
 	//	}
 	//}
+	
+
+	/////////// Exists step encoding
+	// compute the disabling graph
+	map<FactPair,set<int>> needingActions;
+	map<FactPair,set<int>> deletingActions;
+	for (size_t op = 0; op < task_proxy.get_operators().size(); op ++){
+		OperatorProxy opProxy = task_proxy.get_operators()[op];
+
+		PreconditionsProxy precs = opProxy.get_preconditions();
+		map<int,int> preMap;
+		for (size_t pre = 0; pre < precs.size(); pre++){
+			FactProxy fact = precs[pre];
+			needingActions[fact.get_pair()].insert(op);
+			preMap[fact.get_variable().get_id()] = fact.get_value();
+		}
+		EffectsProxy effs = opProxy.get_effects();
+		for (size_t eff = 0; eff < effs.size(); eff++){
+			EffectProxy thisEff = effs[eff];
+			// gather the conditions of the conditional effect 
+			EffectConditionsProxy cond = thisEff.get_conditions();
+			for (size_t i = 0; i < cond.size(); i++){
+				FactProxy condition = cond[i];
+				needingActions[condition.get_pair()].insert(op);
+			}
+
+			// implicit deleting effects, i.e. delete any value of the variable that is set
+			for (int val = 0; val < thisEff.get_fact().get_variable().get_domain_size(); val++){
+				if (val == thisEff.get_fact().get_value()) continue;
+				if (preMap.count(thisEff.get_fact().get_variable().get_id()) &&
+					preMap[thisEff.get_fact().get_variable().get_id()] != val)
+					continue;
+		
+				FactPair deletedFact(thisEff.get_fact().get_variable().get_id(),val);
+				deletingActions[deletedFact].insert(op);
+			}
+		}
+	}
+
+	// actually compute the edges of the graph
+	vector<set<int>> disabling_graph;
+
+	for (auto [fact, deleters] : deletingActions){
+		for (int deleter : deleters){
+			for (int needer : needingActions[fact]){
+				
+			}
+		}
+	}
 }
+
+
+
+//std::vector<Clause> generateChainForAtTime(
+//    const std::vector<std::pair<Task, int>>& E,
+//    const std::vector<std::pair<Task, int>>& R,
+//    const std::string& chainID,
+//    int position,
+//    const std::optional<std::string>& qualifierOption) 
+//{
+//    using namespace std::chrono;
+//    auto time0 = system_clock::now();
+//
+//    // Generate chain restriction for every SCC (f1 in Scala code)
+//    std::vector<Clause> f1;
+//    int rpos = 0;
+//    for (const auto& [oi, i] : E) {
+//        if (ignoreActionInStateTransition(oi)) {
+//            continue;
+//        }
+//
+//        while (rpos < R.size() && (R[rpos].second <= i || ignoreActionInStateTransition(R[rpos].first))) {
+//            rpos++;
+//        }
+//
+//        if (rpos < R.size()) {
+//            Clause newClause = qualifierOption
+//                ? Clause({{action(1, position, oi), false}, {chain(position, R[rpos].second, chainID), true}, {*qualifierOption, false}})
+//                : impliesSingle(action(1, position, oi), chain(position, R[rpos].second, chainID));
+//            f1.push_back(newClause);
+//        }
+//    }
+//
+//    auto time1 = system_clock::now();
+//
+//    // Process R and generate additional clauses (f2 in Scala code)
+//    std::vector<Clause> f2;
+//    rpos = 0;
+//    for (const auto& [ai, i] : R) {
+//        if (ignoreActionInStateTransition(ai)) {
+//            continue;
+//        }
+//
+//        while (rpos < R.size() && (R[rpos].second <= i || ignoreActionInStateTransition(R[rpos].first))) {
+//            rpos++;
+//        }
+//
+//        if (rpos < R.size()) {
+//            Clause newClause = qualifierOption
+//                ? Clause({{chain(position, i, chainID), false}, {chain(position, R[rpos].second, chainID), true}, {*qualifierOption, false}})
+//                : impliesSingle(chain(position, i, chainID), chain(position, R[rpos].second, chainID));
+//            f2.push_back(newClause);
+//        }
+//    }
+//
+//    auto time2 = system_clock::now();
+//
+//    // Collect negations (f3 in Scala code)
+//    std::vector<Clause> f3;
+//    for (const auto& [ai, i] : R) {
+//        if (!ignoreActionInStateTransition(ai)) {
+//            Clause newClause = qualifierOption
+//                ? Clause({{chain(position, i, chainID), false}, {action(1, position, ai), false}, {*qualifierOption, false}})
+//                : impliesNot(chain(position, i, chainID), action(1, position, ai));
+//            f3.push_back(newClause);
+//        }
+//    }
+
+
 
 void SATSearch::print_statistics() const {
     statistics.print_detailed_statistics();
@@ -1062,7 +1180,7 @@ SearchStatus SATSearch::step() {
 	for (int time = 0; time <= currentLength; time++){
 		for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
 			atMostOne(solver,capsule,fact_variables[time][var]);
-			if (forceAtLeastOneAction) atLeastOne(solver,capsule,fact_variables[time][var]);
+			atLeastOne(solver,capsule,fact_variables[time][var]);
 		}
 	}
 	registerClauses("state mutexes");
@@ -1070,8 +1188,10 @@ SearchStatus SATSearch::step() {
 	// 7. Action Control
 	// currently the most simple encoding: only one action at a time
 	for (int time = 0; time < currentLength; time++){
+		if (operator_variables[time].size() == 0) continue;
+			
 		atMostOne(solver,capsule,operator_variables[time]);
-		atLeastOne(solver,capsule,operator_variables[time]);
+		if (forceAtLeastOneAction) atLeastOne(solver,capsule,operator_variables[time]);
 	}
 	registerClauses("action control");
 
