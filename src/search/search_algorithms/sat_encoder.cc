@@ -86,6 +86,8 @@ void assertNot(void* solver, int i){
 }
 
 void implies(void* solver, int i, int j){
+	assert(i != 0);
+	assert(j != 0);
 	//DEBUG(std::cout << "Adding " << -i << " " << j << " " << 0 << std::endl);
 	ipasir_add(solver,-i);
 	ipasir_add(solver,j);
@@ -94,6 +96,9 @@ void implies(void* solver, int i, int j){
 }
 
 void impliesAnd(void* solver, int i, int j, int k){
+	assert(i != 0);
+	assert(j != 0);
+	assert(k != 0);
 	//DEBUG(std::cout << "Adding " << -i << " " << j << " " << 0 << std::endl);
 	ipasir_add(solver,-i);
 	ipasir_add(solver,-j);
@@ -103,6 +108,8 @@ void impliesAnd(void* solver, int i, int j, int k){
 }
 
 void impliesNot(void* solver, int i, int j){
+	assert(i != 0);
+	assert(j != 0);
 	//DEBUG(std::cout << "Adding " << -i << " " << j << " " << 0 << std::endl);
 	ipasir_add(solver,-i);
 	ipasir_add(solver,-j);

@@ -17,6 +17,10 @@ public:
             "run the search for a single plan length only. -1 if length should not be fixed.",
             "-1");
 		add_option<int>(
+            "encoding",
+            "set the encoding. Currently supported are OneStep: 0 and ExistsStep: 2",
+            "2");
+		add_option<int>(
             "length_iteration",
             "run the search for a single plan length only. -1 if length should not be fixed. This options run's Rintanen's algorithm C in the round specified by length_iteration",
             "-1");

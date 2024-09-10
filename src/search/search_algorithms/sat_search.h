@@ -2,9 +2,11 @@
 #define SEARCH_ALGORITHMS_EAGER_SEARCH_H
 
 #include "../search_algorithm.h"
+#include "sat_encoder.h"
 
 #include <memory>
 #include <vector>
+#include <map>
 
 
 namespace plugins {
@@ -41,6 +43,7 @@ class SATSearch : public SearchAlgorithm {
 	int lengthIteration;
 	int startLength;
 	double multiplier;
+	bool existsStep = true;
 
 	bool forceAtLeastOneAction;
 
@@ -64,6 +67,27 @@ class SATSearch : public SearchAlgorithm {
 	std::vector<std::vector<OperatorProxy>> achievers_per_derived;
 	
 	void printVariableTruth(void* solver, sat_capsule & capsule);
+
+	// exists step
+    std::vector<std::vector<FactPair>> sorted_op_preconditions;
+	bool can_be_executed_in_same_state(int op1_no, int op2_no);
+	std::vector<int> global_action_ordering;
+	// generate Erasing and Requiring list
+	// per fact, per SCC, gives a list of all E/R as a pair: <operator,position_in_scc>
+	std::map<FactPair,std::vector< std::vector<std::pair<int,int>>  >> erasingList;
+	std::map<FactPair,std::vector< std::vector<std::pair<int,int>>  >> requiringList;
+	
+	void exists_step_restriction(void* solver,sat_capsule & capsule, std::vector<int> & operator_variables);
+	void generateChain(void* solver,sat_capsule & capsule, std::vector<int> & operator_variables,
+		    const std::vector<std::pair<int, int>>& E, const std::vector<std::pair<int, int>>& R);
+
+	
+	std::map<std::string,int> clauseCounter;
+	std::map<std::string,int> variableCounter;
+	
+	void set_up_exists_step();
+	void set_up_single_step();
+	
 protected:
     virtual void initialize() override;
     virtual SearchStatus step() override;

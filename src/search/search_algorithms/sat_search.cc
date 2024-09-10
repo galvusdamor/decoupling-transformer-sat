@@ -26,6 +26,14 @@ SATSearch::SATSearch(const plugins::Options &opts)
 	multiplier(opts.get<double>("multiplier"))
 	{
 
+	switch (opts.get<int>("encoding")){
+		case 0: existsStep = false; break;
+		case 2: existsStep = true; break;
+		default:
+			log << "Error: encoding No " << opts.get<int>("encoding") << " is not supported" << endl;
+			exit(-1);
+	}
+
 	forceAtLeastOneAction = true;
 	
 	currentLength = 1;
@@ -36,6 +44,33 @@ SATSearch::SATSearch(const plugins::Options &opts)
 		forceAtLeastOneAction = false;
 	}
 }
+
+// TODO copied from pruning/stubborn_sets_action_centric.h
+// Relies on both fact sets being sorted by variable.
+static bool contain_conflicting_fact(const vector<FactPair> &facts1,
+                                     const vector<FactPair> &facts2) {
+    auto facts1_it = facts1.begin();
+    auto facts2_it = facts2.begin();
+    while (facts1_it != facts1.end() && facts2_it != facts2.end()) {
+        if (facts1_it->var < facts2_it->var) {
+            ++facts1_it;
+        } else if (facts1_it->var > facts2_it->var) {
+            ++facts2_it;
+        } else {
+            if (facts1_it->value != facts2_it->value)
+                return true;
+            ++facts1_it;
+            ++facts2_it;
+        }
+    }
+    return false;
+}
+
+bool SATSearch::can_be_executed_in_same_state(int op1_no, int op2_no){
+    return !contain_conflicting_fact(sorted_op_preconditions[op1_no],
+                                    			   sorted_op_preconditions[op2_no]);
+}
+
 
 void SATSearch::initialize() {
     log << "conducting SAT search"
@@ -532,11 +567,26 @@ void SATSearch::initialize() {
 	//}
 	
 
+
+	if (existsStep)
+		set_up_exists_step();
+	else
+		set_up_single_step();
+
+	assert(global_action_ordering.size() == task_proxy.get_operators().size());
+}
+
+void SATSearch::set_up_single_step() {
+	for (size_t op = 0; op < task_proxy.get_operators().size(); op++)
+		global_action_ordering.push_back(op);
+}
+
+void SATSearch::set_up_exists_step() {
 	/////////// Exists step encoding
 	// compute the disabling graph
 	map<FactPair,set<int>> needingActions;
 	map<FactPair,set<int>> deletingActions;
-	for (size_t op = 0; op < task_proxy.get_operators().size(); op ++){
+	for(size_t op = 0; op < task_proxy.get_operators().size(); op ++){
 		OperatorProxy opProxy = task_proxy.get_operators()[op];
 
 		PreconditionsProxy precs = opProxy.get_preconditions();
@@ -569,85 +619,129 @@ void SATSearch::initialize() {
 		}
 	}
 
+
+	// prepare data structures needed for compatibility checking
+	// TODO: copied from pruning/stubborn_sets.cc maybe create common super class
+    sorted_op_preconditions = utils::map_vector<vector<FactPair>>(
+        task_proxy.get_operators(), [](const OperatorProxy &op) {
+            return utils::sorted<FactPair>(
+                task_properties::get_fact_pairs(op.get_preconditions()));
+        });
+
+
 	// actually compute the edges of the graph
-	vector<set<int>> disabling_graph;
+	vector<set<int>> disabling_graph(task_proxy.get_operators().size());
 
 	for (auto [fact, deleters] : deletingActions){
 		for (int deleter : deleters){
 			for (int needer : needingActions[fact]){
-				
+				if (deleter == needer) continue;
+				//log << "Edge " << task_proxy.get_operators()[deleter].get_name() << " -> " << task_proxy.get_operators()[needer].get_name() << endl;
+				// if preconditions are incompatible, action's don't disable each other
+				if (!can_be_executed_in_same_state(deleter,needer)) continue;	
+				//log << "\t\t Accept" << endl;
+
+				// deleter disables needer
+				disabling_graph[deleter].insert(needer);
+			}
+		}
+	}
+	
+
+	vector<vector<int>> disabling_graph_vector(task_proxy.get_operators().size());
+	for(size_t op = 0; op < task_proxy.get_operators().size(); op++){
+		for (const int & op2 : disabling_graph[op])
+			disabling_graph_vector[op].push_back(op2);
+	}
+
+
+	vector<vector<int>> disabling_sccs = sccs::compute_maximal_sccs(disabling_graph_vector);
+	log << "Disabling Graph contains " << disabling_sccs.size() << " SCCS." << std::endl;
+
+	// go backwards though the SCCs
+	for (int scc = disabling_sccs.size() - 1; scc >= 0; scc--){
+		//log << "\t SCC No " << scc << endl;
+		for (int i = 0; i < disabling_sccs[scc].size(); i++){
+			const int & opID = disabling_sccs[scc][i];
+			global_action_ordering.push_back(opID);
+			//log << "\t\t Operator " << opID << " " << task_proxy.get_operators()[opID].get_name() << endl;
+		}
+	}
+
+	assert(global_action_ordering.size() == task_proxy.get_operators().size());
+
+	for (auto & [factPair, _ignore] : deletingActions){
+		erasingList[factPair].resize(disabling_sccs.size());
+		requiringList[factPair].resize(disabling_sccs.size());
+		for (size_t scc = 0; scc < disabling_sccs.size(); scc++){
+			for (size_t sccOp = 0; sccOp < disabling_sccs[scc].size(); sccOp++){
+				int op = disabling_sccs[scc][sccOp];
+				// check if this operator has this fact as a precondition
+				if (needingActions[factPair].count(op))
+					requiringList[factPair][scc].push_back({op, sccOp});
+
+				// check if this operator has this fact as an effect
+				if (deletingActions[factPair].count(op))
+					erasingList[factPair][scc].push_back({op, sccOp});
 			}
 		}
 	}
 }
 
 
+void SATSearch::generateChain(void* solver,sat_capsule & capsule,vector<int> & operator_variables,
+	const std::vector<std::pair<int, int>>& E,
+	const std::vector<std::pair<int, int>>& R){
 
-//std::vector<Clause> generateChainForAtTime(
-//    const std::vector<std::pair<Task, int>>& E,
-//    const std::vector<std::pair<Task, int>>& R,
-//    const std::string& chainID,
-//    int position,
-//    const std::optional<std::string>& qualifierOption) 
-//{
-//    using namespace std::chrono;
-//    auto time0 = system_clock::now();
-//
-//    // Generate chain restriction for every SCC (f1 in Scala code)
-//    std::vector<Clause> f1;
-//    int rpos = 0;
-//    for (const auto& [oi, i] : E) {
-//        if (ignoreActionInStateTransition(oi)) {
-//            continue;
-//        }
-//
-//        while (rpos < R.size() && (R[rpos].second <= i || ignoreActionInStateTransition(R[rpos].first))) {
-//            rpos++;
-//        }
-//
-//        if (rpos < R.size()) {
-//            Clause newClause = qualifierOption
-//                ? Clause({{action(1, position, oi), false}, {chain(position, R[rpos].second, chainID), true}, {*qualifierOption, false}})
-//                : impliesSingle(action(1, position, oi), chain(position, R[rpos].second, chainID));
-//            f1.push_back(newClause);
-//        }
-//    }
-//
-//    auto time1 = system_clock::now();
-//
-//    // Process R and generate additional clauses (f2 in Scala code)
-//    std::vector<Clause> f2;
-//    rpos = 0;
-//    for (const auto& [ai, i] : R) {
-//        if (ignoreActionInStateTransition(ai)) {
-//            continue;
-//        }
-//
-//        while (rpos < R.size() && (R[rpos].second <= i || ignoreActionInStateTransition(R[rpos].first))) {
-//            rpos++;
-//        }
-//
-//        if (rpos < R.size()) {
-//            Clause newClause = qualifierOption
-//                ? Clause({{chain(position, i, chainID), false}, {chain(position, R[rpos].second, chainID), true}, {*qualifierOption, false}})
-//                : impliesSingle(chain(position, i, chainID), chain(position, R[rpos].second, chainID));
-//            f2.push_back(newClause);
-//        }
-//    }
-//
-//    auto time2 = system_clock::now();
-//
-//    // Collect negations (f3 in Scala code)
-//    std::vector<Clause> f3;
-//    for (const auto& [ai, i] : R) {
-//        if (!ignoreActionInStateTransition(ai)) {
-//            Clause newClause = qualifierOption
-//                ? Clause({{chain(position, i, chainID), false}, {action(1, position, ai), false}, {*qualifierOption, false}})
-//                : impliesNot(chain(position, i, chainID), action(1, position, ai));
-//            f3.push_back(newClause);
-//        }
-//    }
+	// generate chain variables
+	map<int,int> chainVars; // we only need them for every R.second value
+	for (const auto& [_ignore, i] : R) {
+		int chainVar = capsule.new_variable();
+		chainVars[i] = chainVar;
+		variableCounter["chain"]++;
+		// TODO don't have enough information to generate nice names here
+		// need: timestep, scc number, fact pair
+		DEBUG(capsule.registerVariable(chainVar,"chain R " + to_string(i)));
+	}
 
+	// Generate chain restriction for every SCC (f1 in Scala code)
+	size_t rpos = 0;
+	for (const auto& [opID, i] : E) {
+		// search for the position in the R list with the next higher i value
+		while (rpos < R.size() && R[rpos].second <= i)
+			rpos++;
+
+		if (rpos < R.size())
+			implies(solver, operator_variables[opID], chainVars[R[rpos].second]);
+	}
+
+
+	// Process R and generate additional clauses (f2 in Scala code)
+	if (R.size() >= 2){
+		for (size_t i = 0; i < R.size() - 1; i++) {
+			implies(solver, chainVars[R[i].second], chainVars[R[i+1].second]);
+		}
+	}
+
+	for (const auto& [opID, i] : R) {
+		impliesNot(solver,chainVars[i], operator_variables[opID]);
+	}
+}
+
+void SATSearch::exists_step_restriction(void* solver,sat_capsule & capsule,vector<int> & operator_variables){
+	// loop over all fact pairs
+	for (auto & [factPair, requiringLists] : requiringList){
+		for (size_t scc = 0; scc < requiringLists.size(); scc++){
+			assert(erasingList.count(factPair));
+			const std::vector<std::pair<int,int>> & E = erasingList[factPair][scc];
+			const std::vector<std::pair<int,int>> & R = requiringLists[scc];
+
+			// no chain to be generated
+			if (E.size() == 0 || R.size() == 0) continue;
+			generateChain(solver,capsule,operator_variables,E,R);
+		}
+	}
+}
 
 
 void SATSearch::print_statistics() const {
@@ -697,8 +791,8 @@ SearchStatus SATSearch::step() {
 
 	log << "Building SAT formula for plan length " << currentLength << endl;
 
-	map<string,int> clauseCounter;
-	map<string,int> variableCounter;
+	clauseCounter.clear();
+	variableCounter.clear();
 	int curClauseNumber = 0;
 #define registerClauses(NAME) clauseCounter[NAME] += get_number_of_clauses() - curClauseNumber; curClauseNumber = get_number_of_clauses();
 
@@ -1166,11 +1260,11 @@ SearchStatus SATSearch::step() {
 	GoalsProxy goals = task_proxy.get_goals();
 	for (size_t i = 0; i < goals.size(); i++){
 		if (goals[i].get_variable().is_derived()){
-			log << "Derived GOAL " << goals[i].get_variable().get_id() << " " << goals[i].get_value() << " " << get_last_axiom_var(currentLength,goals[i]) << endl;
+			DEBUG(log << "Derived GOAL " << goals[i].get_variable().get_id() << " " << goals[i].get_value() << " " << get_last_axiom_var(currentLength,goals[i]) << endl);
 			assertYes(solver,get_last_axiom_var(currentLength,goals[i]));
 		
 		} else {
-			log << "Regular GOAL " << goals[i].get_variable().get_id() << " " << goals[i].get_value() << " " << get_fact_var(currentLength,goals[i]) << endl;
+			DEBUG(log << "Regular GOAL " << goals[i].get_variable().get_id() << " " << goals[i].get_value() << " " << get_fact_var(currentLength,goals[i]) << endl);
 			assertYes(solver,get_fact_var(currentLength,goals[i]));
 		}
 	}
@@ -1190,7 +1284,11 @@ SearchStatus SATSearch::step() {
 	for (int time = 0; time < currentLength; time++){
 		if (operator_variables[time].size() == 0) continue;
 			
-		atMostOne(solver,capsule,operator_variables[time]);
+		if (existsStep)
+			exists_step_restriction(solver,capsule,operator_variables[time]);
+		else
+			atMostOne(solver,capsule,operator_variables[time]);
+
 		if (forceAtLeastOneAction) atLeastOne(solver,capsule,operator_variables[time]);
 	}
 	registerClauses("action control");
@@ -1214,18 +1312,33 @@ SearchStatus SATSearch::step() {
 	if (solverState == 10){
 		//printVariableTruth(solver,capsule);
 
+		// maps operator to their index in the global ordering
+		std::vector<int> global_action_indexing(task_proxy.get_operators().size());
+		for(size_t i = 0; i < global_action_ordering.size(); i++)
+			global_action_indexing[global_action_ordering[i]] = i;
 
+		map<int,int> planPositionsToSATStates;
+		planPositionsToSATStates[0] = 0;
 		Plan plan;
 		// plan extraction
 		for (int time = 0; time < currentLength; time++){
+			map<int,int> operatorsThisTime;
 			for (size_t op = 0; op < task_proxy.get_operators().size(); op++){
 				int opvar = operator_variables[time][op];
 				int val = ipasir_val(solver,opvar);
 				if (val > 0){
-					plan.push_back(OperatorID(op));
-					log << "ACTION " << task_proxy.get_operators()[op].get_name() << endl;
+					operatorsThisTime[global_action_indexing[op]] = op;
+					DEBUG(log << "time " << time << " operator " << task_proxy.get_operators()[op].get_name() << endl);
 				}
 			}
+
+			// sort the operators according to their global sorting
+			for (auto & [_sortkey, op] : operatorsThisTime){
+				log << "time " << time << " sorted operator " << task_proxy.get_operators()[op].get_name() << endl;
+				plan.push_back(OperatorID(op));
+			}
+
+			planPositionsToSATStates[plan.size()] = time;
 		}
     
 		//for(int time = 0; time <= currentLength; time++){
@@ -1261,9 +1374,11 @@ SearchStatus SATSearch::step() {
 			//s = State(*task,move(upack));
 			s.unpack();
 
-			for (size_t j = 0; j < s.size(); ++j){
-				int var = get_fact_var(i,s[j]);
-				assert(ipasir_val(solver,var));
+			if (!existsStep || planPositionsToSATStates.count(i)){
+				for (size_t j = 0; j < s.size(); ++j){
+					int var = get_fact_var(planPositionsToSATStates[i],s[j]);
+					assert(ipasir_val(solver,var));
+				}
 			}
 		}
     	
