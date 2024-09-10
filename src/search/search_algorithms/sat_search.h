@@ -7,6 +7,7 @@
 #include <memory>
 #include <vector>
 #include <map>
+#include <set>
 
 
 namespace plugins {
@@ -62,6 +63,10 @@ class SATSearch : public SearchAlgorithm {
 	std::vector<std::vector<std::vector<int>>> achiever;
 	std::vector<std::vector<std::vector<int>>> deleter;
 
+	// axiom structure graph
+	std::vector<std::vector<int>> derived_implication;
+	std::map<FactPair, std::vector<int>> derived_entry_edges;
+	void axiom_dfs(int var, std::set<int> & allReachable);
 	// axiom SCCs
 	std::vector<AxiomSCC> axiomSCCsInTopOrder;
 	std::vector<std::vector<OperatorProxy>> achievers_per_derived;

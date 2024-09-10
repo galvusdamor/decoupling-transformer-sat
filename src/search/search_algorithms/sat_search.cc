@@ -105,13 +105,15 @@ void SATSearch::initialize() {
 	}
 
 
-	for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
-		VariableProxy varProxy = task_proxy.get_variables()[var];
-		if (!varProxy.is_derived()) continue;
-	}
+	//for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+	//	VariableProxy varProxy = task_proxy.get_variables()[var];
+	//	if (!varProxy.is_derived()) continue;
+	//}
 
-	vector<vector<int>> derived_implication(task_proxy.get_variables().size());
+	derived_implication.clear();
+	derived_implication.resize(task_proxy.get_variables().size());
 	achievers_per_derived.resize(task_proxy.get_variables().size());
+	derived_entry_edges.clear();
 
 	// building the derived predicate dependency graph
 	AxiomsProxy axioms = task_proxy.get_axioms();
@@ -149,6 +151,8 @@ void SATSearch::initialize() {
 				assert(fact.get_value() == 1);
 				int fact_var = fact.get_variable().get_id();
 				derived_implication[fact_var].push_back(eff_var);
+			} else {
+				derived_entry_edges[fact.get_pair()].push_back(eff_var);
 			}
 		}
 	}
@@ -581,6 +585,15 @@ void SATSearch::set_up_single_step() {
 		global_action_ordering.push_back(op);
 }
 
+
+void SATSearch::axiom_dfs(int var, set<int> & allReachable){
+	if (allReachable.count(var)) return;
+	allReachable.insert(var);
+	for(int & succ : derived_implication[var])
+		axiom_dfs(succ,allReachable);
+}
+
+
 void SATSearch::set_up_exists_step() {
 	/////////// Exists step encoding
 	// compute the disabling graph
@@ -615,9 +628,21 @@ void SATSearch::set_up_exists_step() {
 		
 				FactPair deletedFact(thisEff.get_fact().get_variable().get_id(),val);
 				deletingActions[deletedFact].insert(op);
+				// treat operators that have an effect that can make a derived fact false as if they were deletes of that fact
+				for (int & start : derived_entry_edges[deletedFact]){
+					set<int> allReachable;
+					axiom_dfs(start,allReachable);
+
+					// if we delete the entry point, any of the connected axioms might become false
+					for (const int & reach : allReachable){
+						deletingActions[FactPair(reach,1)].insert(op);
+					}
+				}
 			}
 		}
 	}
+
+	
 
 
 	// prepare data structures needed for compatibility checking
@@ -646,6 +671,7 @@ void SATSearch::set_up_exists_step() {
 			}
 		}
 	}
+
 	
 
 	vector<vector<int>> disabling_graph_vector(task_proxy.get_operators().size());
