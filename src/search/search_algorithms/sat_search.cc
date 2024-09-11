@@ -595,6 +595,72 @@ void SATSearch::axiom_dfs(int var, set<int> & allReachable){
 
 
 void SATSearch::set_up_exists_step() {
+	// TODO: this does not seem to work at all...
+	// compute definitive effects of actions on axioms
+	//vector<set<FactPair>> necessaryEffect(task_proxy.get_operators().size());
+	//for(size_t op = 0; op < task_proxy.get_operators().size(); op ++){
+	//	OperatorProxy opProxy = task_proxy.get_operators()[op];
+
+	//	// TODO potentially, we can also use preconditions that are not deleted, but I am really not sure how this interacts with \exists-step
+	//	set<FactPair> & definitiveEffects = necessaryEffect[op];
+
+	//	EffectsProxy effs = opProxy.get_effects();
+	//	for (size_t eff = 0; eff < effs.size(); eff++){
+	//		EffectProxy thisEff = effs[eff];
+	//		// gather the conditions of the conditional effect 
+	//		EffectConditionsProxy cond = thisEff.get_conditions();
+	//		if (cond.size()) continue; // this is not a definitive effect!
+	//		definitiveEffects.insert(thisEff.get_fact().get_pair());
+	//	}
+	//	log << "Operator " << op << " has " << definitiveEffects.size() << " pure effects." << endl;
+	//	// loop through the axioms and see which ones we can apply
+	//	for (AxiomSCC & scc : axiomSCCsInTopOrder){
+	//		bool somethingAdded = true;
+
+	//		while (somethingAdded){
+	//			somethingAdded = false;
+	//			for (int & dp : scc.variables){
+	//				// try to apply the axioms in this SCC
+	//				for (OperatorProxy opProxy : achievers_per_derived[dp]){
+	//					// effect
+	//					EffectsProxy effs = opProxy.get_effects();
+	//					assert(effs.size() == 1);
+	//					EffectProxy thisEff = effs[0];
+	//					assert(thisEff.get_fact().get_value() == 1);
+	//					assert(thisEff.get_fact().get_variable().is_derived());
+	//					// Preconditions
+	//					PreconditionsProxy precs = opProxy.get_preconditions();
+	//					vector<FactPair> conds;
+	//	
+	//					for (size_t pre = 0; pre < precs.size(); pre++)
+	//						conds.push_back(precs[pre].get_pair());
+	//					
+	//					EffectConditionsProxy cond = thisEff.get_conditions();
+	//					for (size_t i = 0; i < cond.size(); i++)
+	//						conds.push_back(cond[i].get_pair());
+	//					
+	//					bool applicable = true;
+	//					for (FactPair & pre : conds){
+	//						if (definitiveEffects.count(pre) == 0){
+	//							applicable = false;
+	//							break;
+	//						}
+	//					}
+
+	//					if (!applicable) continue;
+	//					if (definitiveEffects.count(thisEff.get_fact().get_pair())) continue;
+	//					somethingAdded = true;
+	//					definitiveEffects.insert(thisEff.get_fact().get_pair());
+	//				}
+	//			}
+	//		}
+	//	}
+	//	log << "Operator " << op << " has " << definitiveEffects.size() << " implied effect effects." << endl;
+	//}
+	
+	
+	
+	
 	/////////// Exists step encoding
 	// compute the disabling graph
 	map<FactPair,set<int>> needingActions;
@@ -656,7 +722,7 @@ void SATSearch::set_up_exists_step() {
 
 	// actually compute the edges of the graph
 	vector<set<int>> disabling_graph(task_proxy.get_operators().size());
-
+	int number_of_edges_in_disabling_graph = 0;
 	for (auto [fact, deleters] : deletingActions){
 		for (int deleter : deleters){
 			for (int needer : needingActions[fact]){
@@ -668,9 +734,12 @@ void SATSearch::set_up_exists_step() {
 
 				// deleter disables needer
 				disabling_graph[deleter].insert(needer);
+				number_of_edges_in_disabling_graph++;
 			}
 		}
 	}
+
+	log << "Generated Disabling Graph with " << number_of_edges_in_disabling_graph << " edges." << std::endl;
 
 	
 
