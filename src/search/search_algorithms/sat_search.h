@@ -73,9 +73,28 @@ class SATSearch : public SearchAlgorithm {
 	
 	void printVariableTruth(void* solver, sat_capsule & capsule);
 
+
+
+	void compute_necessary_effects(int op, FactPair assumedFact,
+		std::set<FactPair> & maintainedFacts,
+		std::set<FactPair> & potentialEffects,
+		std::set<FactPair> & definitiveEffects);
+
+	std::set<FactPair> evaluate_axioms_on_partial_state(std::set<FactPair> & definitiveEffects);
+	
+	void speculative_evaluate_axioms_on_partial_state(
+			std::set<FactPair> & maintainedFacts,
+			std::set<FactPair> & possibleEffects, std::set<FactPair> & definitiveEffects);
+
+	std::set<FactPair> compute_known_prior_state(int op, FactPair assumedFact);
+	bool myDFS(int cur, int tgt, std::vector<std::vector<int>> & disabling_graph, std::set<int> & visi);
+
+
 	// exists step
     std::vector<std::vector<FactPair>> sorted_op_preconditions;
+    std::vector<std::vector<FactPair>> sorted_op_effects;
 	bool can_be_executed_in_same_state(int op1_no, int op2_no);
+	bool have_actions_unconflicting_effects(int op1_no, int op2_no);
 	std::vector<int> global_action_ordering;
 	// generate Erasing and Requiring list
 	// per fact, per SCC, gives a list of all E/R as a pair: <operator,position_in_scc>

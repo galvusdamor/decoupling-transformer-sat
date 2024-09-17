@@ -1,5 +1,6 @@
 #include <cmath>
 #include <iomanip>
+#include <fstream>
 #include "sat_search.h"
 
 #include "../plugins/options.h"
@@ -16,6 +17,22 @@
 #include "ipasir.h"
 
 using namespace std;
+
+
+void graph_to_dot(vector<vector<int>> graph, string filename){
+	fstream fs (filename, fstream::out);
+	fs << "digraph g {" << endl;
+	for (size_t op = 0; op < graph.size(); op++)
+		fs << "  n" << op << ";" << endl;
+	
+	for (size_t op = 0; op < graph.size(); op++)
+		for (size_t i = 0; i < graph[op].size(); i++)
+			fs << "  n" << op << " -> n" << graph[op][i] << ";" << endl;
+	fs << "}" << endl;
+	fs.close();
+}
+
+
 
 namespace sat_search {
 SATSearch::SATSearch(const plugins::Options &opts)
@@ -69,6 +86,11 @@ static bool contain_conflicting_fact(const vector<FactPair> &facts1,
 bool SATSearch::can_be_executed_in_same_state(int op1_no, int op2_no){
     return !contain_conflicting_fact(sorted_op_preconditions[op1_no],
                                     			   sorted_op_preconditions[op2_no]);
+}
+
+bool SATSearch::have_actions_unconflicting_effects(int op1_no, int op2_no){
+    return !contain_conflicting_fact(sorted_op_effects[op1_no],
+                                    			   sorted_op_effects[op2_no]);
 }
 
 
@@ -594,72 +616,577 @@ void SATSearch::axiom_dfs(int var, set<int> & allReachable){
 }
 
 
-void SATSearch::set_up_exists_step() {
-	// TODO: this does not seem to work at all...
-	// compute definitive effects of actions on axioms
-	//vector<set<FactPair>> necessaryEffect(task_proxy.get_operators().size());
-	//for(size_t op = 0; op < task_proxy.get_operators().size(); op ++){
-	//	OperatorProxy opProxy = task_proxy.get_operators()[op];
+// gather facts that could potentially become true
+// gather fact that must be true afterwards
+void  SATSearch::compute_necessary_effects(int op, FactPair assumedFact,
+		set<FactPair> & maintainedFacts,
+		set<FactPair> & potentialEffects,
+		set<FactPair> & definitiveEffects){
+	OperatorProxy opProxy = task_proxy.get_operators()[op];
+	EffectsProxy effs = opProxy.get_effects();
+	set<FactPair> priorState = compute_known_prior_state(op, assumedFact);
 
-	//	// TODO potentially, we can also use preconditions that are not deleted, but I am really not sure how this interacts with \exists-step
-	//	set<FactPair> & definitiveEffects = necessaryEffect[op];
+	map<int,int> preMap;
+	for (const FactPair & fact : priorState)
+		preMap[fact.var] = fact.value;
 
-	//	EffectsProxy effs = opProxy.get_effects();
-	//	for (size_t eff = 0; eff < effs.size(); eff++){
-	//		EffectProxy thisEff = effs[eff];
-	//		// gather the conditions of the conditional effect 
-	//		EffectConditionsProxy cond = thisEff.get_conditions();
-	//		if (cond.size()) continue; // this is not a definitive effect!
-	//		definitiveEffects.insert(thisEff.get_fact().get_pair());
-	//	}
-	//	log << "Operator " << op << " has " << definitiveEffects.size() << " pure effects." << endl;
-	//	// loop through the axioms and see which ones we can apply
-	//	for (AxiomSCC & scc : axiomSCCsInTopOrder){
-	//		bool somethingAdded = true;
 
-	//		while (somethingAdded){
-	//			somethingAdded = false;
-	//			for (int & dp : scc.variables){
-	//				// try to apply the axioms in this SCC
-	//				for (OperatorProxy opProxy : achievers_per_derived[dp]){
-	//					// effect
-	//					EffectsProxy effs = opProxy.get_effects();
-	//					assert(effs.size() == 1);
-	//					EffectProxy thisEff = effs[0];
-	//					assert(thisEff.get_fact().get_value() == 1);
-	//					assert(thisEff.get_fact().get_variable().is_derived());
-	//					// Preconditions
-	//					PreconditionsProxy precs = opProxy.get_preconditions();
-	//					vector<FactPair> conds;
-	//	
-	//					for (size_t pre = 0; pre < precs.size(); pre++)
-	//						conds.push_back(precs[pre].get_pair());
-	//					
-	//					EffectConditionsProxy cond = thisEff.get_conditions();
-	//					for (size_t i = 0; i < cond.size(); i++)
-	//						conds.push_back(cond[i].get_pair());
-	//					
-	//					bool applicable = true;
-	//					for (FactPair & pre : conds){
-	//						if (definitiveEffects.count(pre) == 0){
-	//							applicable = false;
-	//							break;
-	//						}
-	//					}
+	
+	// 1. Any non-derived that is not changed will remain true 
+	for (const FactPair & fact : priorState)
+		if (!task_proxy.get_variables()[fact.var].is_derived())
+			definitiveEffects.insert(fact);
 
-	//					if (!applicable) continue;
-	//					if (definitiveEffects.count(thisEff.get_fact().get_pair())) continue;
-	//					somethingAdded = true;
-	//					definitiveEffects.insert(thisEff.get_fact().get_pair());
-	//				}
-	//			}
-	//		}
-	//	}
-	//	log << "Operator " << op << " has " << definitiveEffects.size() << " implied effect effects." << endl;
+	for (size_t eff = 0; eff < effs.size(); eff++){
+		EffectProxy thisEff = effs[eff];
+		// gather the conditions of the conditional effect 
+		EffectConditionsProxy cond = thisEff.get_conditions();
+		// check if conditions are potentially satisfied
+		bool allConditionsPotentiallyTrue = true;
+		for (size_t i = 0; i < cond.size(); i++){
+			FactProxy condition = cond[i];
+			// we don't know anything about the truth of this variable
+			if (preMap.count(condition.get_variable().get_id()) == 0) continue;
+			// we know this condition is true
+			if (preMap[condition.get_variable().get_id()] == condition.get_pair().value) continue;
+			// if we get here, the conditions variable has a different value than we know it must have
+			allConditionsPotentiallyTrue = false;
+			break;
+		}
+		if (!allConditionsPotentiallyTrue) continue;
+		// if this was true before, it is not potentially new
+		if (priorState.count(thisEff.get_fact().get_pair()) == 0)
+			potentialEffects.insert(thisEff.get_fact().get_pair());
+		
+		// try to erase if this fact might become false
+		if (thisEff.get_fact().get_variable().is_derived()) continue;
+		if (preMap.count(thisEff.get_fact().get_variable().get_id()) == 0) continue;
+		int thisEffectVariable = thisEff.get_fact().get_variable().get_id(); 
+		// potential effect might generate the same value that it had before
+		if (preMap[thisEffectVariable] == thisEff.get_fact().get_value()) continue;
+
+		definitiveEffects.erase(FactPair(thisEffectVariable,preMap[thisEffectVariable]));
+	}
+	
+	
+	//for (const FactPair & pair : definitiveEffects){
+	//	log << "Definitive surviving preconditions: " << pair << endl;
 	//}
+
+	// get the definitive effects of this action
+	for (size_t eff = 0; eff < effs.size(); eff++){
+		EffectProxy thisEff = effs[eff];
+		// gather the conditions of the conditional effect 
+		EffectConditionsProxy cond = thisEff.get_conditions();
+
+		// check if conditions is satisfied. This can only stem from the assumed axiom
+		bool allConditionsTrue = true;
+		for (size_t i = 0; i < cond.size(); i++){
+			FactProxy condition = cond[i];
+			if (priorState.count(condition.get_pair())) continue;
+			// if this condition is not known to be true, we don't know whether the effect will fire 
+			allConditionsTrue = false;
+			break;
+		}
+		if (!allConditionsTrue) continue;
+		definitiveEffects.insert(thisEff.get_fact().get_pair());
+	}
+	//for (const FactPair & pair : definitiveEffects){
+	//	log << "Definitive Effects: " << pair << endl;
+	//}
+	// run speculative execution to see which facts might be come true
+	speculative_evaluate_axioms_on_partial_state(maintainedFacts,potentialEffects,definitiveEffects);
+	//for (const FactPair & pair : potentialEffects){
+	//	log << "Potential effects: " << pair << endl;
+	//}
+
+	// all derived predicates that were false before and cannot potentially become true remain false
+	for (const FactPair & fact : priorState) {
+		if (!task_proxy.get_variables()[fact.var].is_derived()) continue;
+		if (fact.value == 1) continue; // we can't say anything about these
+		FactPair inverse (fact.var,0);
+		// check if this derived can become true
+		if (potentialEffects.count(inverse)) continue;
+		definitiveEffects.insert(fact);
+		//log << "Definitive Effects due to speculative execution: " << fact << endl;
+	}
+	
+	evaluate_axioms_on_partial_state(definitiveEffects);
+}
+
+set<FactPair> SATSearch::evaluate_axioms_on_partial_state(set<FactPair> & definitiveEffects){
+	map<int,int> stateMap;
+	for (const FactPair & pair : definitiveEffects){
+		stateMap[pair.var] = pair.value;
+	}
+
+	// evaluate all axioms on the partial state that we got ...
+	set<FactPair> newEffects; 
+	for (AxiomSCC & scc : axiomSCCsInTopOrder){
+		bool somethingAdded = true;
+		set<int> thisSCCVars(scc.variables.begin(), scc.variables.end());
+		set<int> allAchieversInapplicable(scc.variables.begin(), scc.variables.end());
+
+		//if (thisSCCVars.count(68)){
+		//	log << "SCC:";
+		//	for (int i : thisSCCVars) log << " " << i;
+		//   	log << endl;
+		//}
+
+		bool allEnteringAreInapplicable = true;
+		while (somethingAdded){
+			somethingAdded = false;
+			for (int & dp : scc.variables){
+				// try to apply the axioms in this SCC
+				bool allInapplicable = true;
+				for (OperatorProxy opProxy : achievers_per_derived[dp]){
+					//if (dp == 65) log << "Operator for DP 65" << endl;
+					// effect
+					EffectsProxy effs = opProxy.get_effects();
+					assert(effs.size() == 1);
+					EffectProxy thisEff = effs[0];
+					assert(thisEff.get_fact().get_value() == 1);
+					assert(thisEff.get_fact().get_variable().is_derived());
+					// Preconditions
+					PreconditionsProxy precs = opProxy.get_preconditions();
+					vector<FactPair> conds;
+	
+					for (size_t pre = 0; pre < precs.size(); pre++)
+						conds.push_back(precs[pre].get_pair());
+					
+					EffectConditionsProxy cond = thisEff.get_conditions();
+					for (size_t i = 0; i < cond.size(); i++)
+						conds.push_back(cond[i].get_pair());
+				
+
+					bool cyclicOperator = false;
+					bool inApplicable = false;	
+					bool applicable = true;
+					for (FactPair & pre : conds){
+						// this is just that the DP has to be false before we apply this rule.
+						if (pre.var == thisEff.get_fact().get_variable().get_id()) continue;
+
+						if (thisSCCVars.count(pre.var))
+							cyclicOperator = true;
+
+						if (stateMap.count(pre.var)){
+							// condition is incompatible with known true state 
+							if (stateMap[pre.var] != pre.value)
+								inApplicable = true;
+						}
+
+						if (definitiveEffects.count(pre) == 0){
+							applicable = false;
+							break;
+						}
+					}
+
+					// non-cyclic, i.e., entering this SCC
+					// not inapplicable, i.e., could potentially be applicable
+					if (!cyclicOperator && !inApplicable)
+						allEnteringAreInapplicable = false;
+
+					if (!inApplicable)
+						allInapplicable = false;
+
+					if (!applicable) continue;
+					if (definitiveEffects.count(thisEff.get_fact().get_pair())) continue;
+					somethingAdded = true;
+					definitiveEffects.insert(thisEff.get_fact().get_pair());
+					newEffects.insert(thisEff.get_fact().get_pair());
+					stateMap[thisEff.get_fact().get_pair().var] = thisEff.get_fact().get_pair().value;
+				}
+				if (!allInapplicable)
+					allAchieversInapplicable.erase(dp);
+			}
+		}
+		
+		for (const int & dp : allAchieversInapplicable){
+			//log << "All achievers are definitely inapplicable for " << dp << endl;
+			definitiveEffects.insert(FactPair(dp,0));
+			newEffects.insert(FactPair(dp,0));
+			stateMap[dp] = 0;
+		}
+
+		if (allEnteringAreInapplicable){
+			//log << "All Entering are definitely inapplicable" << endl;
+			for (int & dp : scc.variables){
+				definitiveEffects.insert(FactPair(dp,0));
+				newEffects.insert(FactPair(dp,0));
+				stateMap[dp] = 0;
+			}
+		}
+	}
+	//for (const FactPair & pair : newEffects){
+	//	log << "Effects After Propagation: " << pair << endl;
+	//}
+
+	return definitiveEffects;
+}
+
+void SATSearch::speculative_evaluate_axioms_on_partial_state(set<FactPair> & maintainedFacts, set<FactPair> & possibleEffects, set<FactPair> & definitiveEffects){
+	map<int,int> stateMap;
+	for (const FactPair & pair : definitiveEffects){
+		stateMap[pair.var] = pair.value;
+	}
+	
+	// evaluate all axioms on the partial state that we got ...
+	set<FactPair> newEffects; 
+	for (AxiomSCC & scc : axiomSCCsInTopOrder){
+		bool somethingAdded = true;
+		set<int> thisSCCVars(scc.variables.begin(), scc.variables.end());
+		set<int> allAchieversInapplicable(scc.variables.begin(), scc.variables.end());
+
+		while (somethingAdded){
+			somethingAdded = false;
+			for (int & dp : scc.variables){
+				// try to apply the axioms in this SCC
+				for (OperatorProxy opProxy : achievers_per_derived[dp]){
+					EffectsProxy effs = opProxy.get_effects();
+					assert(effs.size() == 1);
+					EffectProxy thisEff = effs[0];
+					assert(thisEff.get_fact().get_value() == 1);
+					assert(thisEff.get_fact().get_variable().is_derived());
+					
+					// we have already proven that if the value remains 0 if it was,
+					// this derived predicate cannot become newly 1
+					FactPair inverted(thisEff.get_fact().get_variable().get_id(), 0);
+					if (maintainedFacts.count(inverted))
+						continue;
+						
+					// Preconditions
+					PreconditionsProxy precs = opProxy.get_preconditions();
+					vector<FactPair> conds;
+	
+					for (size_t pre = 0; pre < precs.size(); pre++)
+						conds.push_back(precs[pre].get_pair());
+					
+					EffectConditionsProxy cond = thisEff.get_conditions();
+					for (size_t i = 0; i < cond.size(); i++)
+						conds.push_back(cond[i].get_pair());
+				
+					bool inApplicable = false;
+					bool potentiallyNewlyApplicable = false;
+					for (FactPair & pre : conds){
+						// this is just that the DP has to be false before we apply this rule.
+						if (pre.var == thisEff.get_fact().get_variable().get_id()) continue;
+
+						if (stateMap.count(pre.var)){
+							// condition is incompatible with known true state 
+							if (stateMap[pre.var] != pre.value){
+								inApplicable = true;
+								break;
+							}
+						}
+
+						if (possibleEffects.count(pre) > 0)
+							potentiallyNewlyApplicable = true;
+					}
+
+					if (inApplicable) continue;
+					if (!potentiallyNewlyApplicable) continue; // execution will remain the same
+					possibleEffects.insert(thisEff.get_fact().get_pair());
+
+				}
+			}
+		}
+	}
+	//for (const FactPair & pair : possibleEffects){
+	//	log << "Possible Effects After Propagation: " << pair << endl;
+	//}
+}
+
+set<FactPair> SATSearch::compute_known_prior_state(int op, FactPair assumedFact){
+	OperatorProxy opProxy = task_proxy.get_operators()[op];
+	EffectsProxy effs = opProxy.get_effects();
+	set<FactPair> definitiveBefore;
+
+	// get all preconditions
+	PreconditionsProxy precs = opProxy.get_preconditions();
+	set<FactPair> definitiveDerivedBefore;
+
+	if (assumedFact.var != -1){
+		definitiveBefore.insert(assumedFact);
+	}
+
+	for (size_t pre = 0; pre < precs.size(); pre++){
+		FactProxy fact = precs[pre];
+		definitiveBefore.insert(fact.get_pair());
+	}
+
+	bool newInference = true;
+	while (newInference){
+		newInference = false;
+		// Derived predicates can imply further facts, if they only have one achiever
+		set<FactPair> loopCopy = definitiveBefore;
+		for (const FactPair & derived : loopCopy){
+			if (!task_proxy.get_variables()[derived.var].is_derived()) continue;
+			//log << "\tKnow that " << derived << " before action" << endl;
+			if (derived.value == 1){
+				if (achievers_per_derived[derived.var].size() == 1){
+					for (OperatorProxy opProxy : achievers_per_derived[derived.var]){
+						PreconditionsProxy precs = opProxy.get_preconditions();
+						vector<FactPair> conds;
+		
+						for (size_t pre = 0; pre < precs.size(); pre++)
+							conds.push_back(precs[pre].get_pair());
+						
+						EffectProxy thisEff = opProxy.get_effects()[0];
+						EffectConditionsProxy cond = thisEff.get_conditions();
+						for (size_t i = 0; i < cond.size(); i++)
+							conds.push_back(cond[i].get_pair());
+
+						for (FactPair & pre : conds){
+							// this is just that the DP has to be false before we apply this rule.
+							if (pre.var == thisEff.get_fact().get_variable().get_id()) continue;
+							if (definitiveBefore.count(pre)) continue;
+							newInference = true;
+							definitiveBefore.insert(pre);
+						}
+					}
+				}
+			} else {
+				// we know that Derived Predicate is false
+				for (OperatorProxy opProxy : achievers_per_derived[derived.var]){
+					//log << "\tCausing operator" << endl;
+					PreconditionsProxy precs = opProxy.get_preconditions();
+					vector<FactPair> conds;
+		
+					for (size_t pre = 0; pre < precs.size(); pre++)
+						conds.push_back(precs[pre].get_pair());
+					
+					EffectProxy thisEff = opProxy.get_effects()[0];
+					EffectConditionsProxy cond = thisEff.get_conditions();
+					for (size_t i = 0; i < cond.size(); i++)
+						conds.push_back(cond[i].get_pair());
+
+					int unknownConditions = 0;
+					FactPair unknownCondition (-1,-1);
+					for (FactPair & pre : conds){
+						//log << "\t\t\t" << pre.var << "=" << pre.value << endl;
+						// this is just that the DP has to be false before we apply this rule.
+						if (pre.var == thisEff.get_fact().get_variable().get_id()) continue;
+						if (definitiveBefore.count(pre)) continue;
+						unknownConditions++;
+						unknownCondition = pre;
+					}
+
+					if (unknownConditions == 1){
+						int variable = unknownCondition.var;
+						if (task_proxy.get_variables()[variable].get_domain_size() == 2){
+							int value = 1 - unknownCondition.value; // it must be the other value
+
+							if (definitiveBefore.count(FactPair(variable, value)) == 0){
+								definitiveBefore.insert(FactPair(variable, value));
+								newInference = true;
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	//for (const FactPair & pair : definitiveBefore){
+	//	log << "Definitive Before: " << pair << endl;
+	//}
+	return definitiveBefore;
+}
+
+bool SATSearch::myDFS(int cur, int tgt, vector<vector<int>> & disabling_graph, set<int> & visi){
+	if (cur == tgt) return true;
+	if (visi.count(cur)) return false;
+	visi.insert(cur);
+
+	for (int next : disabling_graph[cur]){
+		if (myDFS(next,tgt,disabling_graph,visi)){
+			log << cur << " " << task_proxy.get_operators()[cur].get_name() << endl;
+			return true;
+		}
+	}
+
+	return false;
+}
+
+void SATSearch::set_up_exists_step() {
+
+	log << "Computing maintainance effects of actions" << endl;
+	vector<set<FactPair>> maintainedFactsByOperator(task_proxy.get_operators().size());
+	for(size_t op = 0; op < task_proxy.get_operators().size(); op++){
+		//continue;
+		//if (op != 36) continue;
+		log << "\t Operator " << op << endl;
+		set<FactPair> & maintainedFacts = maintainedFactsByOperator[op];
+		OperatorProxy opProxy = task_proxy.get_operators()[op];
+		EffectsProxy effs = opProxy.get_effects();
 	
 	
+		bool newMaintained = true;
+		while (newMaintained){
+			newMaintained = false;
 	
+			// first true than false	
+			for (int value = 1; value >= 0; value --){
+				if (value == 1){
+					for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+						//if (var != 65) continue;
+						// result already known
+						if (maintainedFacts.count(FactPair(var,value))) continue;
+						
+						VariableProxy varProxy = task_proxy.get_variables()[var];
+						if (!varProxy.is_derived()) continue;
+		
+						//log << "POS Considering derived variable " << var << " " << varProxy.get_name() << endl;
+						assert(varProxy.get_domain_size() == 2);
+		
+		
+						// TODO: handle the special case that this variable is non-recursive and determined by a disjunction of other derived variables
+						// the 65 -> 84, 66->84, 67->84, ... case
+						// basically: this is a disjunction and all disjunctive conditions are maintains
+		
+						FactPair derivedPair(var,value);
+						set<FactPair> potentialEffects;
+						set<FactPair> definitiveEffects;
+						compute_necessary_effects(op, derivedPair, maintainedFacts, potentialEffects, definitiveEffects);
+						FactPair derivedInverted(var,1-value);
+		
+						if (definitiveEffects.count(derivedPair)){
+								//potentialEffects.count(derivedInverted) == 0){
+							//log << "Maintain " << var << "=" << value << endl;
+							maintainedFacts.insert(FactPair(var,value));
+							newMaintained = true;
+							continue;
+						}
+
+						// special case: disjunctions
+						bool allCausesMaintained = true;
+						for (OperatorProxy opProxy : achievers_per_derived[var]){
+							EffectsProxy effs = opProxy.get_effects();
+							assert(effs.size() == 1);
+							EffectProxy thisEff = effs[0];
+							assert(thisEff.get_fact().get_value() == 1);
+							assert(thisEff.get_fact().get_variable().is_derived());
+							// Preconditions
+							PreconditionsProxy precs = opProxy.get_preconditions();
+							vector<FactPair> conds;
+							
+							for (size_t pre = 0; pre < precs.size(); pre++)
+								conds.push_back(precs[pre].get_pair());
+							
+							EffectConditionsProxy cond = thisEff.get_conditions();
+							for (size_t i = 0; i < cond.size(); i++)
+								conds.push_back(cond[i].get_pair());
+							
+							bool maintained = true;
+							for (FactPair & pre : conds){
+								// this is just that the DP has to be false before we apply this rule.
+								if (pre.var == thisEff.get_fact().get_variable().get_id()) continue;
+								if (definitiveEffects.count(pre)) continue;
+								if (maintainedFacts.count(pre)) continue;
+
+								// this could be the cause and it might not be true any more
+								maintained = false;
+							}
+							if (!maintained){
+								allCausesMaintained = false;
+								break;
+							}
+						}
+						if (allCausesMaintained){
+							maintainedFacts.insert(FactPair(var,value));
+							newMaintained = true;
+						}
+					}
+				} else {
+					// value = false
+					for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+						//if (var != 65) continue;
+						// result already known
+						if (maintainedFacts.count(FactPair(var,value))) continue;
+		
+						VariableProxy varProxy = task_proxy.get_variables()[var];
+						if (!varProxy.is_derived()) continue;
+		
+						//log << "NEG Considering derived variable " << var << " " << varProxy.get_name() << endl;
+						assert(varProxy.get_domain_size() == 2);
+						
+						// compute all effects of this action
+						FactPair derivedPair(var,value);
+		
+						set<FactPair> potentialEffects;
+						set<FactPair> definitiveEffects;
+						compute_necessary_effects(op, derivedPair, maintainedFacts, potentialEffects, definitiveEffects);
+						// convert to map so that we can test for contradictions more easily	
+						map<int,int> stateMap;
+						for (const FactPair & pair : definitiveEffects){
+							stateMap[pair.var] = pair.value;
+						}
+		
+						bool couldBecomeTrue = false;
+						for (OperatorProxy opProxy : achievers_per_derived[var]){
+							//log << "Operator could make it true. " << endl;
+							EffectsProxy effs = opProxy.get_effects();
+							assert(effs.size() == 1);
+							EffectProxy thisEff = effs[0];
+							assert(thisEff.get_fact().get_value() == 1);
+							assert(thisEff.get_fact().get_variable().is_derived());
+							// Preconditions
+							PreconditionsProxy precs = opProxy.get_preconditions();
+							vector<FactPair> conds;
+							
+							for (size_t pre = 0; pre < precs.size(); pre++)
+								conds.push_back(precs[pre].get_pair());
+							
+							EffectConditionsProxy cond = thisEff.get_conditions();
+							for (size_t i = 0; i < cond.size(); i++)
+								conds.push_back(cond[i].get_pair());
+							
+							bool applicable = true;
+							bool onePotentiallyNewCondition = false;
+							for (FactPair & pre : conds){
+								// this is just that the DP has to be false before we apply this rule.
+								if (pre.var == thisEff.get_fact().get_variable().get_id()) continue;
+								//log << "\tCondition " << pre << endl;
+						
+								if (potentialEffects.count(pre))
+									onePotentiallyNewCondition = true;
+		
+								if (stateMap.count(pre.var)){
+									if (stateMap[pre.var] != pre.value){
+										//log << "\t\tAction has contradicting effect" << endl;
+										applicable = false;
+										break;
+									}
+									// condition is definitely true
+									//log << "\t\tAction has supporting effect" << endl;
+									continue;
+								}
+		
+								
+								//log << "\t\tdon't know anything about this fact" << endl;
+								// we can only assume it could be true
+							}
+							//log << "\tOperator: " << applicable << " " << onePotentiallyNewCondition << endl;
+							if (applicable && onePotentiallyNewCondition) couldBecomeTrue = true;
+						}
+		
+						if (couldBecomeTrue) continue;
+						//log << "Maintain " << var << "=" << value << endl;
+						maintainedFacts.insert(FactPair(var,value));
+						newMaintained = true;
+					}
+				}
+			}
+		}
+	
+	
+		if (op == 39 || op == 42)
+			for (const FactPair & maintained : maintainedFacts)
+				log << "Maintain " << maintained.var << "=" << maintained.value << endl;
+	
+	}
+
+	//exit(0);
 	
 	/////////// Exists step encoding
 	// compute the disabling graph
@@ -701,6 +1228,10 @@ void SATSearch::set_up_exists_step() {
 
 					// if we delete the entry point, any of the connected axioms might become false
 					for (const int & reach : allReachable){
+						// if derived is maintained, it cannot be deleted.
+						if (maintainedFactsByOperator[op].count(FactPair(reach,1)) &&
+							maintainedFactsByOperator[op].count(FactPair(reach,0))
+								) continue;
 						deletingActions[FactPair(reach,1)].insert(op);
 					}
 				}
@@ -720,26 +1251,73 @@ void SATSearch::set_up_exists_step() {
         });
 
 
+
+    sorted_op_effects = utils::map_vector<vector<FactPair>>(
+        task_proxy.get_operators(), [](const OperatorProxy &op) {
+			EffectsProxy effProx = op.get_effects();
+			vector<EffectProxy> unconditionalEffects;
+			for (EffectProxy eff : effProx)
+				if (eff.get_conditions().size() == 0)
+					unconditionalEffects.push_back(eff);
+
+            return utils::sorted<FactPair>(
+                utils::map_vector<FactPair>(
+                    unconditionalEffects,
+                    [](const EffectProxy &eff) {return eff.get_fact().get_pair();}));
+        });
+
+
+	for (size_t op = 0; op < task_proxy.get_operators().size(); op++)
+		log << op << " " << task_proxy.get_operators()[op].get_name() << endl;
+
 	// actually compute the edges of the graph
 	vector<set<int>> disabling_graph(task_proxy.get_operators().size());
 	int number_of_edges_in_disabling_graph = 0;
+	int number_refuted_edges_in_disabling_graph = 0;
 	for (auto [fact, deleters] : deletingActions){
 		for (int deleter : deleters){
 			for (int needer : needingActions[fact]){
 				if (deleter == needer) continue;
-				//log << "Edge " << task_proxy.get_operators()[deleter].get_name() << " -> " << task_proxy.get_operators()[needer].get_name() << endl;
 				// if preconditions are incompatible, action's don't disable each other
-				if (!can_be_executed_in_same_state(deleter,needer)) continue;	
-				//log << "\t\t Accept" << endl;
+				if (!can_be_executed_in_same_state(deleter,needer)) {
+					number_refuted_edges_in_disabling_graph++;
+					continue;	
+				}
+				if (!have_actions_unconflicting_effects(deleter,needer)) {
+					number_refuted_edges_in_disabling_graph++;
+					continue;	
+				}
+				
+				// check whether the actions have 
+
+				if (deleter == 42 && needer == 39)
+					log << "Critical p2 deletes p1: fact " << fact << endl;
+				if (deleter == 39 && needer == 42)
+					log << "Critical p1 deletes p2: fact " << fact << endl;
+
+				if (deleter == 0 && needer == 39)
+					log << "CRAP Critical p2 deletes p1: fact " << fact << endl;
+				if (deleter == 39 && needer == 0)
+					log << "CRAP Critical p1 deletes p2: fact " << fact << endl;
 
 				// deleter disables needer
+				if (disabling_graph[deleter].count(needer)) continue; // only count inserted edges once
+
 				disabling_graph[deleter].insert(needer);
 				number_of_edges_in_disabling_graph++;
 			}
 		}
 	}
 
+	//log << "Var 84 << " << task_proxy.get_variables()[84].get_name() << endl;
+	//log << "Var 27 << " << task_proxy.get_variables()[27].get_name() << endl;
+	//log << "Var 30 << " << task_proxy.get_variables()[30].get_name() << endl;
+	//log << "Var 33 << " << task_proxy.get_variables()[33].get_name() << endl;
+	//log << "Var 34 << " << task_proxy.get_variables()[34].get_name() << endl;
+	//log << "Var 35 << " << task_proxy.get_variables()[35].get_name() << endl;
+
 	log << "Generated Disabling Graph with " << number_of_edges_in_disabling_graph << " edges." << std::endl;
+	log << "Refuted " << number_refuted_edges_in_disabling_graph << " edges." << std::endl;
 
 	
 
@@ -749,6 +1327,11 @@ void SATSearch::set_up_exists_step() {
 			disabling_graph_vector[op].push_back(op2);
 	}
 
+	// print to file
+	graph_to_dot(disabling_graph_vector,"disabling.graph");
+	set<int> visi;
+	//myDFS(39,42,disabling_graph_vector, visi);
+	//exit(0);
 
 	vector<vector<int>> disabling_sccs = sccs::compute_maximal_sccs(disabling_graph_vector);
 	log << "Disabling Graph contains " << disabling_sccs.size() << " SCCS." << std::endl;
@@ -769,6 +1352,7 @@ void SATSearch::set_up_exists_step() {
 		erasingList[factPair].resize(disabling_sccs.size());
 		requiringList[factPair].resize(disabling_sccs.size());
 		for (size_t scc = 0; scc < disabling_sccs.size(); scc++){
+			if (disabling_sccs[scc].size() == 1) continue; // no disabling possible.
 			for (size_t sccOp = 0; sccOp < disabling_sccs[scc].size(); sccOp++){
 				int op = disabling_sccs[scc][sccOp];
 				// check if this operator has this fact as a precondition
@@ -1468,6 +2052,7 @@ SearchStatus SATSearch::step() {
 			//axiom_evaluator.evaluate(upack);
 			//s = State(*task,move(upack));
 			s.unpack();
+			//task_properties::dump_fdr(s);
 
 			if (!existsStep || planPositionsToSATStates.count(i)){
 				for (size_t j = 0; j < s.size(); ++j){
