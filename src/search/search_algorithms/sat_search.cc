@@ -621,7 +621,8 @@ void SATSearch::axiom_dfs(int var, set<int> & allReachable){
 void  SATSearch::compute_necessary_effects(int op, FactPair assumedFact,
 		set<FactPair> & maintainedFacts,
 		set<FactPair> & potentialEffects,
-		set<FactPair> & definitiveEffects){
+		set<FactPair> & definitiveEffects,
+		bool evaluateAxiomsAfter){
 	OperatorProxy opProxy = task_proxy.get_operators()[op];
 	EffectsProxy effs = opProxy.get_effects();
 	set<FactPair> priorState = compute_known_prior_state(op, assumedFact);
@@ -668,10 +669,12 @@ void  SATSearch::compute_necessary_effects(int op, FactPair assumedFact,
 		definitiveEffects.erase(FactPair(thisEffectVariable,preMap[thisEffectVariable]));
 	}
 	
-	
-	//for (const FactPair & pair : definitiveEffects){
-	//	log << "Definitive surviving preconditions: " << pair << endl;
-	//}
+	if (logInference){
+		for (const FactPair & pair : definitiveEffects){
+			log << "Definitive surviving preconditions: " << pair << endl;
+		}
+	}
+
 
 	// get the definitive effects of this action
 	for (size_t eff = 0; eff < effs.size(); eff++){
@@ -691,24 +694,31 @@ void  SATSearch::compute_necessary_effects(int op, FactPair assumedFact,
 		if (!allConditionsTrue) continue;
 		definitiveEffects.insert(thisEff.get_fact().get_pair());
 	}
-	//for (const FactPair & pair : definitiveEffects){
-	//	log << "Definitive Effects: " << pair << endl;
-	//}
+	if (logInference){
+		for (const FactPair & pair : definitiveEffects){
+			log << "Definitive Effects: " << pair << endl;
+		}
+	}
+	
+	if (!evaluateAxiomsAfter) return;
+	
 	// run speculative execution to see which facts might be come true
 	speculative_evaluate_axioms_on_partial_state(maintainedFacts,potentialEffects,definitiveEffects);
-	//for (const FactPair & pair : potentialEffects){
-	//	log << "Potential effects: " << pair << endl;
-	//}
+	if (logInference){
+		for (const FactPair & pair : potentialEffects){
+			log << "Potential effects: " << pair << endl;
+		}
+	}
 
 	// all derived predicates that were false before and cannot potentially become true remain false
 	for (const FactPair & fact : priorState) {
 		if (!task_proxy.get_variables()[fact.var].is_derived()) continue;
 		if (fact.value == 1) continue; // we can't say anything about these
-		FactPair inverse (fact.var,0);
+		FactPair inverse (fact.var,1);
 		// check if this derived can become true
 		if (potentialEffects.count(inverse)) continue;
 		definitiveEffects.insert(fact);
-		//log << "Definitive Effects due to speculative execution: " << fact << endl;
+		if (logInference) log << "Definitive Effects due to speculative execution: " << fact << endl;
 	}
 	
 	evaluate_axioms_on_partial_state(definitiveEffects);
@@ -726,12 +736,6 @@ set<FactPair> SATSearch::evaluate_axioms_on_partial_state(set<FactPair> & defini
 		bool somethingAdded = true;
 		set<int> thisSCCVars(scc.variables.begin(), scc.variables.end());
 		set<int> allAchieversInapplicable(scc.variables.begin(), scc.variables.end());
-
-		//if (thisSCCVars.count(68)){
-		//	log << "SCC:";
-		//	for (int i : thisSCCVars) log << " " << i;
-		//   	log << endl;
-		//}
 
 		bool allEnteringAreInapplicable = true;
 		while (somethingAdded){
@@ -817,11 +821,60 @@ set<FactPair> SATSearch::evaluate_axioms_on_partial_state(set<FactPair> & defini
 			}
 		}
 	}
-	//for (const FactPair & pair : newEffects){
-	//	log << "Effects After Propagation: " << pair << endl;
-	//}
+	if (logInference){
+		for (const FactPair & pair : newEffects){
+			log << "Effects After Propagation: " << pair << endl;
+		}
+	}
 
 	return definitiveEffects;
+}
+
+
+bool SATSearch::try_to_satisfy(set<int> & activeAxtioms, set<FactPair> & currentState, FactPair goal){
+	if (currentState.count(goal)) return true; // true and nothing to do.
+
+	// try to search for an axiom that will make the goal fact true
+	int unusedAxiom = -1;
+	for (OperatorProxy opProxy : achievers_per_derived[goal.var]){
+		EffectsProxy effs = opProxy.get_effects();
+		EffectProxy thisEff = effs[0];
+		
+		// Preconditions
+		PreconditionsProxy precs = opProxy.get_preconditions();
+		vector<FactPair> conds;
+
+		for (size_t pre = 0; pre < precs.size(); pre++)
+			conds.push_back(precs[pre].get_pair());
+		
+		EffectConditionsProxy cond = thisEff.get_conditions();
+		for (size_t i = 0; i < cond.size(); i++)
+			conds.push_back(cond[i].get_pair());
+	
+
+		bool allConditionsSatisfied = true;
+		for (FactPair & pre : conds){
+			// this is just that the DP has to be false before we apply this rule.
+			if (pre.var == thisEff.get_fact().get_variable().get_id()) continue;
+			if (currentState.count(pre)) continue;
+
+			allConditionsSatisfied = false;
+			break;
+		}
+		if (!allConditionsSatisfied) continue;
+
+		if (activeAxtioms.count(opProxy.get_id())) return true; // nothing to do
+		unusedAxiom = opProxy.get_id();
+	}
+
+	// we have an axiom for this, just use it!
+	if (unusedAxiom != -1){
+		activeAxtioms.insert(unusedAxiom);
+		return true;	
+	}
+
+	// no axiom that could satisfy my result
+	return false;
 }
 
 void SATSearch::speculative_evaluate_axioms_on_partial_state(set<FactPair> & maintainedFacts, set<FactPair> & possibleEffects, set<FactPair> & definitiveEffects){
@@ -891,9 +944,11 @@ void SATSearch::speculative_evaluate_axioms_on_partial_state(set<FactPair> & mai
 			}
 		}
 	}
-	//for (const FactPair & pair : possibleEffects){
-	//	log << "Possible Effects After Propagation: " << pair << endl;
-	//}
+	if (logInference) {
+		for (const FactPair & pair : possibleEffects){
+			log << "Possible Effects After Propagation: " << pair << endl;
+		}
+	}
 }
 
 set<FactPair> SATSearch::compute_known_prior_state(int op, FactPair assumedFact){
@@ -1013,8 +1068,8 @@ void SATSearch::set_up_exists_step() {
 	log << "Computing maintainance effects of actions" << endl;
 	vector<set<FactPair>> maintainedFactsByOperator(task_proxy.get_operators().size());
 	for(size_t op = 0; op < task_proxy.get_operators().size(); op++){
-		//continue;
-		//if (op != 36) continue;
+		continue;
+		//if (op != 39) continue;
 		log << "\t Operator " << op << endl;
 		set<FactPair> & maintainedFacts = maintainedFactsByOperator[op];
 		OperatorProxy opProxy = task_proxy.get_operators()[op];
@@ -1029,36 +1084,33 @@ void SATSearch::set_up_exists_step() {
 			for (int value = 1; value >= 0; value --){
 				if (value == 1){
 					for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
-						//if (var != 65) continue;
+						//if (var != 10) continue;
 						// result already known
 						if (maintainedFacts.count(FactPair(var,value))) continue;
 						
 						VariableProxy varProxy = task_proxy.get_variables()[var];
-						if (!varProxy.is_derived()) continue;
 		
-						//log << "POS Considering derived variable " << var << " " << varProxy.get_name() << endl;
-						assert(varProxy.get_domain_size() == 2);
-		
-		
-						// TODO: handle the special case that this variable is non-recursive and determined by a disjunction of other derived variables
-						// the 65 -> 84, 66->84, 67->84, ... case
-						// basically: this is a disjunction and all disjunctive conditions are maintains
+						if (logInference)
+							log << "POS Considering derived variable " << var << " " << varProxy.get_name() << endl;
+						//assert(varProxy.get_domain_size() == 2);
 		
 						FactPair derivedPair(var,value);
 						set<FactPair> potentialEffects;
 						set<FactPair> definitiveEffects;
-						compute_necessary_effects(op, derivedPair, maintainedFacts, potentialEffects, definitiveEffects);
+						compute_necessary_effects(op, derivedPair, maintainedFacts, potentialEffects, definitiveEffects, true);
 						FactPair derivedInverted(var,1-value);
 		
 						if (definitiveEffects.count(derivedPair)){
 								//potentialEffects.count(derivedInverted) == 0){
-							//log << "Maintain " << var << "=" << value << endl;
+							if (logInference) log << "Maintain as Effect " << var << "=" << value << endl;
 							maintainedFacts.insert(FactPair(var,value));
 							newMaintained = true;
 							continue;
 						}
+						
+						// special case: disjunctions but this only works for derived predicates
+						if (!varProxy.is_derived()) continue;
 
-						// special case: disjunctions
 						bool allCausesMaintained = true;
 						for (OperatorProxy opProxy : achievers_per_derived[var]){
 							EffectsProxy effs = opProxy.get_effects();
@@ -1093,6 +1145,7 @@ void SATSearch::set_up_exists_step() {
 							}
 						}
 						if (allCausesMaintained){
+							if (logInference) log << "Maintain Disjunct " << var << "=" << value << endl;
 							maintainedFacts.insert(FactPair(var,value));
 							newMaintained = true;
 						}
@@ -1100,22 +1153,38 @@ void SATSearch::set_up_exists_step() {
 				} else {
 					// value = false
 					for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
-						//if (var != 65) continue;
+						//if (var != 10) continue;
 						// result already known
 						if (maintainedFacts.count(FactPair(var,value))) continue;
-		
+						
 						VariableProxy varProxy = task_proxy.get_variables()[var];
-						if (!varProxy.is_derived()) continue;
-		
-						//log << "NEG Considering derived variable " << var << " " << varProxy.get_name() << endl;
-						assert(varProxy.get_domain_size() == 2);
+						if (logInference)
+							log << "NEG Considering derived variable " << var << " " << varProxy.get_name() << endl;
+						FactPair derivedPair(var,value);
 						
 						// compute all effects of this action
-						FactPair derivedPair(var,value);
-		
 						set<FactPair> potentialEffects;
 						set<FactPair> definitiveEffects;
-						compute_necessary_effects(op, derivedPair, maintainedFacts, potentialEffects, definitiveEffects);
+						compute_necessary_effects(op, derivedPair, maintainedFacts, potentialEffects, definitiveEffects, true);
+
+
+						if (logInference){
+							for (const FactPair & pair : definitiveEffects){
+								log << "State after: " << pair << endl;
+							}
+						}
+						if (definitiveEffects.count(derivedPair)){
+								//potentialEffects.count(derivedInverted) == 0){
+							if (logInference) log << "Maintain as Effect " << var << "=" << value << endl;
+							maintainedFacts.insert(FactPair(var,value));
+							newMaintained = true;
+							continue;
+						}
+						
+						// special case: disjunctions but this only works for derived predicates
+						if (!varProxy.is_derived()) continue;
+
+
 						// convert to map so that we can test for contradictions more easily	
 						map<int,int> stateMap;
 						for (const FactPair & pair : definitiveEffects){
@@ -1171,7 +1240,7 @@ void SATSearch::set_up_exists_step() {
 						}
 		
 						if (couldBecomeTrue) continue;
-						//log << "Maintain " << var << "=" << value << endl;
+						if (logInference) log << "Maintain Causes " << var << "=" << value << endl;
 						maintainedFacts.insert(FactPair(var,value));
 						newMaintained = true;
 					}
@@ -1180,19 +1249,29 @@ void SATSearch::set_up_exists_step() {
 		}
 	
 	
-		if (op == 39 || op == 42)
-			for (const FactPair & maintained : maintainedFacts)
-				log << "Maintain " << maintained.var << "=" << maintained.value << endl;
+		if (op == 0){
+			for (int value = 1; value >= 0; value --){
+				for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+					FactPair derivedPair(var,value);
+					if (maintainedFacts.count(derivedPair)) continue;
+					log << "Not Maintained " << var << "=" << value << endl;
+				}
+				//exit(0);
+			}
+			//for (const FactPair & maintained : maintainedFacts)
+			//	log << "Maintain " << maintained.var << "=" << maintained.value << endl;
+		}
 	
 	}
 
-	//exit(0);
 	
 	/////////// Exists step encoding
 	// compute the disabling graph
 	map<FactPair,set<int>> needingActions;
 	map<FactPair,set<int>> deletingActions;
 	for(size_t op = 0; op < task_proxy.get_operators().size(); op ++){
+		if (op % 100 == 0)
+			log << "Disabling Graph Operator " << op << " of " << task_proxy.get_operators().size() << endl;
 		OperatorProxy opProxy = task_proxy.get_operators()[op];
 
 		PreconditionsProxy precs = opProxy.get_preconditions();
@@ -1202,16 +1281,25 @@ void SATSearch::set_up_exists_step() {
 			needingActions[fact.get_pair()].insert(op);
 			preMap[fact.get_variable().get_id()] = fact.get_value();
 		}
+
+		map<FactPair, vector< vector<FactPair>>> effects;
+
 		EffectsProxy effs = opProxy.get_effects();
 		for (size_t eff = 0; eff < effs.size(); eff++){
 			EffectProxy thisEff = effs[eff];
 			// gather the conditions of the conditional effect 
 			EffectConditionsProxy cond = thisEff.get_conditions();
+			vector<FactPair> conditions;
 			for (size_t i = 0; i < cond.size(); i++){
 				FactProxy condition = cond[i];
 				needingActions[condition.get_pair()].insert(op);
+				conditions.push_back(condition.get_pair());
 			}
 
+			if (decouplingMode){
+				effects[thisEff.get_fact().get_pair()].push_back(conditions);
+			}
+			
 			// implicit deleting effects, i.e. delete any value of the variable that is set
 			for (int val = 0; val < thisEff.get_fact().get_variable().get_domain_size(); val++){
 				if (val == thisEff.get_fact().get_value()) continue;
@@ -1221,6 +1309,9 @@ void SATSearch::set_up_exists_step() {
 		
 				FactPair deletedFact(thisEff.get_fact().get_variable().get_id(),val);
 				deletingActions[deletedFact].insert(op);
+
+				if (decouplingMode) continue; // we determine the effects on derived predicates differently
+
 				// treat operators that have an effect that can make a derived fact false as if they were deletes of that fact
 				for (int & start : derived_entry_edges[deletedFact]){
 					set<int> allReachable;
@@ -1229,19 +1320,87 @@ void SATSearch::set_up_exists_step() {
 					// if we delete the entry point, any of the connected axioms might become false
 					for (const int & reach : allReachable){
 						// if derived is maintained, it cannot be deleted.
-						if (maintainedFactsByOperator[op].count(FactPair(reach,1)) &&
-							maintainedFactsByOperator[op].count(FactPair(reach,0))
-								) continue;
+						//if (maintainedFactsByOperator[op].count(FactPair(reach,1)) &&
+						//	maintainedFactsByOperator[op].count(FactPair(reach,0))
+						//		) continue;
 						deletingActions[FactPair(reach,1)].insert(op);
 					}
 				}
 			}
 		}
+
+
+
+		if (decouplingMode){
+			set<int> activeAxioms;
+			for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+				VariableProxy varProxy = task_proxy.get_variables()[var];
+				if (!varProxy.is_derived()) continue; // those are determined above
+
+				// positive maintenance - i.e. if the fact was true, we try to keep it true
+				FactPair derivedTarget(var,1);
+			
+
+				set<FactPair> guaranteedEffects; // contains all facts that *must* be true after the action
+				// try to do this with out any inference
+	
+				// get the definitive effects of this action
+				for (size_t eff = 0; eff < effs.size(); eff++){
+					EffectProxy thisEff = effs[eff];
+					// gather the conditions of the conditional effect 
+					EffectConditionsProxy cond = thisEff.get_conditions();
+
+					// check if conditions is satisfied. This can only stem from the assumed axiom
+					bool allConditionsTrue = true;
+					for (size_t i = 0; i < cond.size(); i++){
+						FactProxy condition = cond[i];
+						if (derivedTarget == condition.get_pair()) continue;
+						// if this condition is not known to be true, we don't know whether the effect will fire 
+						allConditionsTrue = false;
+						break;
+					}
+					if (!allConditionsTrue) continue;
+					guaranteedEffects.insert(thisEff.get_fact().get_pair());
+				}
+				// if I can satisfy with this minimal amount of information, then fine
+				if (try_to_satisfy(activeAxioms, guaranteedEffects, derivedTarget)) continue;
+							
+				if (false){
+					// reset and try to perform better inference
+					guaranteedEffects.clear();
+
+					// does this cause any effects to fire?
+					set<FactPair> _unused1;
+					set<FactPair> _unused2;
+					compute_necessary_effects(op,derivedTarget,_unused1,_unused2,guaranteedEffects, false); // don't evaluate the axioms, I'll do that myself
+					if (logInference)
+						for (const FactPair & pair : guaranteedEffects){
+							log << "State After: " << pair << endl;
+						}
+
+					// now try to get the fact to be true
+					if (try_to_satisfy(activeAxioms, guaranteedEffects, derivedTarget)) continue;
+				}
+				// we could not ensure that this fact remains true to it might get deleted
+				deletingActions[derivedTarget].insert(op);
+				if (logInference) log << "Op " << op << " deleting " << derivedTarget.var << "=" << derivedTarget.value << endl;
+			}
+
+			for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+				VariableProxy varProxy = task_proxy.get_variables()[var];
+				if (!varProxy.is_derived()) continue; // those are determined above
+
+				// negative maintenance - i.e. if the fact was false, we try to keep it false
+				FactPair derivedTarget(var,0);
+				
+				// we could not ensure that this fact remains true to it might get deleted
+				deletingActions[derivedTarget].insert(op);
+				if (logInference) log << "Op " << op << " deleting " << derivedTarget.var << "=" << derivedTarget.value << endl;
+			}
+		}
 	}
 
 	
-
-
 	// prepare data structures needed for compatibility checking
 	// TODO: copied from pruning/stubborn_sets.cc maybe create common super class
     sorted_op_preconditions = utils::map_vector<vector<FactPair>>(
@@ -1267,8 +1426,8 @@ void SATSearch::set_up_exists_step() {
         });
 
 
-	for (size_t op = 0; op < task_proxy.get_operators().size(); op++)
-		log << op << " " << task_proxy.get_operators()[op].get_name() << endl;
+	//for (size_t op = 0; op < task_proxy.get_operators().size(); op++)
+	//	log << op << " " << task_proxy.get_operators()[op].get_name() << endl;
 
 	// actually compute the edges of the graph
 	vector<set<int>> disabling_graph(task_proxy.get_operators().size());
@@ -1290,15 +1449,15 @@ void SATSearch::set_up_exists_step() {
 				
 				// check whether the actions have 
 
-				if (deleter == 42 && needer == 39)
-					log << "Critical p2 deletes p1: fact " << fact << endl;
-				if (deleter == 39 && needer == 42)
-					log << "Critical p1 deletes p2: fact " << fact << endl;
+				//if (deleter == 42 && needer == 39)
+				//	log << "Critical p2 deletes p1: fact " << fact << endl;
+				//if (deleter == 39 && needer == 42)
+				//	log << "Critical p1 deletes p2: fact " << fact << endl;
 
-				if (deleter == 0 && needer == 39)
-					log << "CRAP Critical p2 deletes p1: fact " << fact << endl;
-				if (deleter == 39 && needer == 0)
-					log << "CRAP Critical p1 deletes p2: fact " << fact << endl;
+				//if (deleter == 0 && needer == 39)
+				//	log << "CRAP Critical p2 deletes p1: fact " << fact << endl;
+				//if (deleter == 39 && needer == 0)
+				//	log << "CRAP Critical p1 deletes p2: fact " << fact << endl;
 
 				// deleter disables needer
 				if (disabling_graph[deleter].count(needer)) continue; // only count inserted edges once
@@ -1328,8 +1487,8 @@ void SATSearch::set_up_exists_step() {
 	}
 
 	// print to file
-	graph_to_dot(disabling_graph_vector,"disabling.graph");
-	set<int> visi;
+	//graph_to_dot(disabling_graph_vector,"disabling.graph");
+	//set<int> visi;
 	//myDFS(39,42,disabling_graph_vector, visi);
 	//exit(0);
 
@@ -1340,6 +1499,7 @@ void SATSearch::set_up_exists_step() {
 	for (int scc = disabling_sccs.size() - 1; scc >= 0; scc--){
 		//log << "\t SCC No " << scc << endl;
 		for (int i = 0; i < disabling_sccs[scc].size(); i++){
+		//for (int i = disabling_sccs[scc].size() - 1; i >= 0; i--){
 			const int & opID = disabling_sccs[scc][i];
 			global_action_ordering.push_back(opID);
 			//log << "\t\t Operator " << opID << " " << task_proxy.get_operators()[opID].get_name() << endl;
@@ -1587,6 +1747,7 @@ SearchStatus SATSearch::step() {
 			for (size_t eff = 0; eff < effs.size(); eff++){
 				EffectProxy thisEff = effs[eff];
 				int eff_fact_var = get_fact_var(time+1,thisEff.get_fact());
+				int eff_fact_var_before = get_fact_var(time,thisEff.get_fact());
 
 				// gather the conditions of the conditional effect in a set (could be a vector ...)
 				set<int> conditions;
@@ -1599,6 +1760,9 @@ SearchStatus SATSearch::step() {
 				if (conditions.size() == 0){
 					thisCausation = opvar;
 				} else {
+					// for conditional effects we add that the effect is not yet true
+					//conditions.insert(-eff_fact_var_before);
+
 					// operator that has exactly the same condition for the same effect
 					if (conditionBuffer[thisEff.get_fact().get_pair()].count(conditions)){
 						// reuse the causation variable

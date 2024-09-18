@@ -36,9 +36,15 @@ struct AxiomSCC{
 	// preprocessing information guarded implications (i.e. ones that depend on a variable value)
 	std::vector<std::vector<std::vector<int>>> guardedTransitiveImplications;
 	std::vector<std::vector<std::vector<int>>> guardedTransitiveCauses;
+	
 };
 
 class SATSearch : public SearchAlgorithm {
+	// debugging / output configuration
+	bool logInference = false;
+	
+	// actual run configuration
+	bool decouplingMode = true;
 	int planLength;
 	int currentLength;
 	int lengthIteration;
@@ -74,17 +80,21 @@ class SATSearch : public SearchAlgorithm {
 	void printVariableTruth(void* solver, sat_capsule & capsule);
 
 
+	bool try_to_satisfy(std::set<int> & activeAxtioms, std::set<FactPair> & currentState, FactPair goal);
+
 
 	void compute_necessary_effects(int op, FactPair assumedFact,
 		std::set<FactPair> & maintainedFacts,
 		std::set<FactPair> & potentialEffects,
-		std::set<FactPair> & definitiveEffects);
+		std::set<FactPair> & definitiveEffects,
+			bool evaluateAxiomsAfter);
 
 	std::set<FactPair> evaluate_axioms_on_partial_state(std::set<FactPair> & definitiveEffects);
 	
 	void speculative_evaluate_axioms_on_partial_state(
 			std::set<FactPair> & maintainedFacts,
 			std::set<FactPair> & possibleEffects, std::set<FactPair> & definitiveEffects);
+
 
 	std::set<FactPair> compute_known_prior_state(int op, FactPair assumedFact);
 	bool myDFS(int cur, int tgt, std::vector<std::vector<int>> & disabling_graph, std::set<int> & visi);
