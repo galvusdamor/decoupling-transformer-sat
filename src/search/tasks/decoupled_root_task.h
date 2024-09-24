@@ -32,6 +32,8 @@ class DecoupledRootTask : public RootTask {
     ConclusiveLeafEncoding conclusive_leaf_encoding;
     mutable std::unordered_map<int, std::unordered_set<int>> original_operator_tr_eff_vars;
 
+    bool global_leave_effects;
+
     std::unordered_map<int, int> center_var_to_pvar;
     std::unordered_map<int, int> conclusive_leaf_var_to_pvar;
     std::unordered_map<int, int> leaf_to_goal_svar;
@@ -45,6 +47,8 @@ class DecoupledRootTask : public RootTask {
     std::unordered_map<int, int> original_op_id_to_global_op_id;
 
     std::unordered_set<int> prunable_operators;
+
+    std::set<ExplicitOperator> copy_operators; 
 
 public:
     DecoupledRootTask(const plugins::Options &options);
@@ -94,6 +98,7 @@ protected:
     void set_general_leaf_effects_of_operator(int op_id, ExplicitOperator &op, int leaf);
     void set_conclusive_leaf_effects_of_operator(int op_id, ExplicitOperator &op, int leaf, ConclusiveLeafEncoding encoding);
     void set_leaf_effects_of_operator(int op_id, ExplicitOperator &op);
+    void create_copy_operators(int op_id);
     void create_operator(int op_id);
     void create_operators();
 

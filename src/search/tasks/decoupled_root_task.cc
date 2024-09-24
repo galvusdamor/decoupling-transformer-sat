@@ -24,7 +24,8 @@ DecoupledRootTask::DecoupledRootTask(const plugins::Options &options)
       skip_unnecessary_leaf_effects(options.get<bool>("skip_unnecessary_leaf_effects")),
       same_leaf_preconditons_single_variable(options.get<bool>("same_leaf_preconditons_single_variable")),
       conclusive_operators(options.get<bool>("conclusive_operators")),
-      conclusive_leaf_encoding(options.get<ConclusiveLeafEncoding>("conclusive_leaf_encoding")) {
+      conclusive_leaf_encoding(options.get<ConclusiveLeafEncoding>("conclusive_leaf_encoding")),
+      global_leave_effects(options.get<bool>("global_leave_effects")) {
     TaskProxy original_task_proxy(*original_root_task);
     task_properties::verify_no_axioms(original_task_proxy);
     task_properties::verify_no_conditional_effects(original_task_proxy);
@@ -601,6 +602,34 @@ void DecoupledRootTask::set_leaf_effects_of_operator(int op_id, ExplicitOperator
     }
 }
 
+void DecoupledRootTask::create_copy_operators(int op_id) {
+    for (int leaf = 0; leaf < factoring->get_num_leaves(); ++leaf) {
+        ExplicitOperator op(0, "copy_leaf_" + to_string(leaf) + "_opids", false);
+        if (conclusive_leaf_encoding && is_conclusive_leaf(leaf)) {
+            set_conclusive_leaf_effects_of_operator(op_id, op, leaf, conclusive_leaf_encoding);
+        } else {
+            if (!skip_unnecessary_leaf_effects) {
+                set_general_leaf_effects_of_operator(op_id, op, leaf);
+            } else {
+                if (factoring->has_pre_or_eff_on_leaf(op_id, leaf) || factoring->does_op_restrict_leaf(op_id, leaf)) {
+                    if (conclusive_operators && is_conclusive_operator(op_id, leaf)) {
+                        set_conclusive_leaf_effects_of_operator(op_id, op, leaf, ConclusiveLeafEncoding::BINARY);
+                    } else {
+                        set_general_leaf_effects_of_operator(op_id, op, leaf);
+                    }
+                }
+            }
+        }
+
+        // Hack: Insert object to detect if contained, then extract to modify and insert
+        auto [iterator, was_inserted] = copy_operators.insert(op);
+        ExplicitOperator modifiable_op = *iterator;
+        copy_operators.erase(iterator);
+        modifiable_op.name += "_" + to_string(op_id);
+        copy_operators.insert(modifiable_op);
+    }
+}
+
 void DecoupledRootTask::create_operator(int op_id) {
     assert(factoring->is_global_operator(op_id));
     const auto &op = original_root_task->operators[op_id];
@@ -611,9 +640,13 @@ void DecoupledRootTask::create_operator(int op_id) {
     assert(set<FactPair>(new_op.preconditions.begin(), new_op.preconditions.end()).size() == new_op.preconditions.size());
 
     set_center_effects_of_operator(op_id, new_op);
-    set_leaf_effects_of_operator(op_id, new_op);
-    assert(!new_op.effects.empty());
-    assert(set<ExplicitEffect>(new_op.effects.begin(), new_op.effects.end()).size() == new_op.effects.size());
+    if (global_leave_effects) {
+        set_leaf_effects_of_operator(op_id, new_op);
+        assert(!new_op.effects.empty());
+        assert(set<ExplicitEffect>(new_op.effects.begin(), new_op.effects.end()).size() == new_op.effects.size());
+    } else {
+        create_copy_operators(op_id);
+    }
 
     operators.push_back(new_op);
 }
@@ -633,6 +666,10 @@ void DecoupledRootTask::create_operators() {
     assert((int)operators.size() <= factoring->get_num_global_operators());
     // We can have duplicated actions (not pruned by FD translator)
     // assert(set<ExplicitOperator>(operators.begin(), operators.end()).size() == operators.size());
+
+    if (!global_leave_effects) {
+        copy(copy_operators.begin(), copy_operators.end(), back_inserter(operators));
+    }
 }
 
 void DecoupledRootTask::create_frame_axioms() {
@@ -841,6 +878,7 @@ public:
         add_option<ConclusiveLeafEncoding>("conclusive_leaf_encoding", "Conclusive leaf encoding.", "multivalued");
         add_option<bool>("skip_unnecessary_leaf_effects", "Skip unnecessary leaf effects for operators that have no influence on the leaf.", "true");
         add_option<bool>("conclusive_operators", "Avoid conditional effects for the effects of conclusive operators on a non-conclusive leaf.", "true");
+        add_option<bool>("global_leave_effects", "Add leave effects to global operators. If false, we create separate copy operators (not a valid compilation and only useful for SAT-based planning).", "true");
         add_option<bool>("dump_task", "Dumps the task to the console.", "false");
         add_option<bool>("write_sas", "Writes the decoupled task to dec_output.sas.", "false");
         add_option<bool>("normalize_variable_names", "Normalizes the variable names by numbering in the format var[x]", "false");
