@@ -58,6 +58,7 @@ class SATSearch : public SearchAlgorithm {
 	std::vector<std::vector<std::vector<int>>> fact_variables;
 	// index: timestep -> operator 
 	std::vector<std::vector<int>> operator_variables;
+	std::vector<std::vector<int>> real_operator_variables;
 	int get_fact_var(int time, FactProxy fact);
 	
 	// index: timestep -> variable

@@ -604,7 +604,7 @@ void DecoupledRootTask::set_leaf_effects_of_operator(int op_id, ExplicitOperator
 
 void DecoupledRootTask::create_seperate_leaf_effect_operators(int op_id) {
     for (int leaf = 0; leaf < factoring->get_num_leaves(); ++leaf) {
-        ExplicitOperator op(0, "leafeffect_" + to_string(leaf) + "_opids", false);
+        ExplicitOperator op(0, "#leaf " + to_string(leaf), false);
         if (conclusive_leaf_encoding && is_conclusive_leaf(leaf)) {
             set_conclusive_leaf_effects_of_operator(op_id, op, leaf, conclusive_leaf_encoding);
         } else {
@@ -625,7 +625,7 @@ void DecoupledRootTask::create_seperate_leaf_effect_operators(int op_id) {
         auto [iterator, was_inserted] = seperate_leaf_effect_operators.insert(op);
         ExplicitOperator modifiable_op = *iterator;
         seperate_leaf_effect_operators.erase(iterator);
-        modifiable_op.name += "_" + to_string(op_id);
+        modifiable_op.name += " " + to_string(op_id);
         seperate_leaf_effect_operators.insert(modifiable_op);
     }
 }

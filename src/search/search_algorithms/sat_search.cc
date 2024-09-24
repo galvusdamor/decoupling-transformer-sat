@@ -1,6 +1,8 @@
 #include <cmath>
 #include <iomanip>
 #include <fstream>
+#include <sstream>
+
 #include "sat_search.h"
 
 #include "../plugins/options.h"
@@ -95,7 +97,8 @@ bool SATSearch::have_actions_unconflicting_effects(int op1_no, int op2_no){
 
 
 void SATSearch::initialize() {
-    log << "conducting SAT search"
+
+	log << "conducting SAT search"
 		<< " for plan length: " << (planLength==-1?"all":to_string(planLength))
         << endl;
 
@@ -1065,204 +1068,204 @@ bool SATSearch::myDFS(int cur, int tgt, vector<vector<int>> & disabling_graph, s
 
 void SATSearch::set_up_exists_step() {
 
-	log << "Computing maintainance effects of actions" << endl;
-	vector<set<FactPair>> maintainedFactsByOperator(task_proxy.get_operators().size());
-	for(size_t op = 0; op < task_proxy.get_operators().size(); op++){
-		continue;
-		//if (op != 39) continue;
-		log << "\t Operator " << op << endl;
-		set<FactPair> & maintainedFacts = maintainedFactsByOperator[op];
-		OperatorProxy opProxy = task_proxy.get_operators()[op];
-		EffectsProxy effs = opProxy.get_effects();
-	
-	
-		bool newMaintained = true;
-		while (newMaintained){
-			newMaintained = false;
-	
-			// first true than false	
-			for (int value = 1; value >= 0; value --){
-				if (value == 1){
-					for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
-						//if (var != 10) continue;
-						// result already known
-						if (maintainedFacts.count(FactPair(var,value))) continue;
-						
-						VariableProxy varProxy = task_proxy.get_variables()[var];
-		
-						if (logInference)
-							log << "POS Considering derived variable " << var << " " << varProxy.get_name() << endl;
-						//assert(varProxy.get_domain_size() == 2);
-		
-						FactPair derivedPair(var,value);
-						set<FactPair> potentialEffects;
-						set<FactPair> definitiveEffects;
-						compute_necessary_effects(op, derivedPair, maintainedFacts, potentialEffects, definitiveEffects, true);
-						FactPair derivedInverted(var,1-value);
-		
-						if (definitiveEffects.count(derivedPair)){
-								//potentialEffects.count(derivedInverted) == 0){
-							if (logInference) log << "Maintain as Effect " << var << "=" << value << endl;
-							maintainedFacts.insert(FactPair(var,value));
-							newMaintained = true;
-							continue;
-						}
-						
-						// special case: disjunctions but this only works for derived predicates
-						if (!varProxy.is_derived()) continue;
+	//log << "Computing maintainance effects of actions" << endl;
+	//vector<set<FactPair>> maintainedFactsByOperator(task_proxy.get_operators().size());
+	//for(size_t op = 0; op < task_proxy.get_operators().size(); op++){
+	//	continue;
+	//	//if (op != 39) continue;
+	//	log << "\t Operator " << op << endl;
+	//	set<FactPair> & maintainedFacts = maintainedFactsByOperator[op];
+	//	OperatorProxy opProxy = task_proxy.get_operators()[op];
+	//	EffectsProxy effs = opProxy.get_effects();
+	//
+	//
+	//	bool newMaintained = true;
+	//	while (newMaintained){
+	//		newMaintained = false;
+	//
+	//		// first true than false	
+	//		for (int value = 1; value >= 0; value --){
+	//			if (value == 1){
+	//				for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+	//					//if (var != 10) continue;
+	//					// result already known
+	//					if (maintainedFacts.count(FactPair(var,value))) continue;
+	//					
+	//					VariableProxy varProxy = task_proxy.get_variables()[var];
+	//	
+	//					if (logInference)
+	//						log << "POS Considering derived variable " << var << " " << varProxy.get_name() << endl;
+	//					//assert(varProxy.get_domain_size() == 2);
+	//	
+	//					FactPair derivedPair(var,value);
+	//					set<FactPair> potentialEffects;
+	//					set<FactPair> definitiveEffects;
+	//					compute_necessary_effects(op, derivedPair, maintainedFacts, potentialEffects, definitiveEffects, true);
+	//					FactPair derivedInverted(var,1-value);
+	//	
+	//					if (definitiveEffects.count(derivedPair)){
+	//							//potentialEffects.count(derivedInverted) == 0){
+	//						if (logInference) log << "Maintain as Effect " << var << "=" << value << endl;
+	//						maintainedFacts.insert(FactPair(var,value));
+	//						newMaintained = true;
+	//						continue;
+	//					}
+	//					
+	//					// special case: disjunctions but this only works for derived predicates
+	//					if (!varProxy.is_derived()) continue;
 
-						bool allCausesMaintained = true;
-						for (OperatorProxy opProxy : achievers_per_derived[var]){
-							EffectsProxy effs = opProxy.get_effects();
-							assert(effs.size() == 1);
-							EffectProxy thisEff = effs[0];
-							assert(thisEff.get_fact().get_value() == 1);
-							assert(thisEff.get_fact().get_variable().is_derived());
-							// Preconditions
-							PreconditionsProxy precs = opProxy.get_preconditions();
-							vector<FactPair> conds;
-							
-							for (size_t pre = 0; pre < precs.size(); pre++)
-								conds.push_back(precs[pre].get_pair());
-							
-							EffectConditionsProxy cond = thisEff.get_conditions();
-							for (size_t i = 0; i < cond.size(); i++)
-								conds.push_back(cond[i].get_pair());
-							
-							bool maintained = true;
-							for (FactPair & pre : conds){
-								// this is just that the DP has to be false before we apply this rule.
-								if (pre.var == thisEff.get_fact().get_variable().get_id()) continue;
-								if (definitiveEffects.count(pre)) continue;
-								if (maintainedFacts.count(pre)) continue;
+	//					bool allCausesMaintained = true;
+	//					for (OperatorProxy opProxy : achievers_per_derived[var]){
+	//						EffectsProxy effs = opProxy.get_effects();
+	//						assert(effs.size() == 1);
+	//						EffectProxy thisEff = effs[0];
+	//						assert(thisEff.get_fact().get_value() == 1);
+	//						assert(thisEff.get_fact().get_variable().is_derived());
+	//						// Preconditions
+	//						PreconditionsProxy precs = opProxy.get_preconditions();
+	//						vector<FactPair> conds;
+	//						
+	//						for (size_t pre = 0; pre < precs.size(); pre++)
+	//							conds.push_back(precs[pre].get_pair());
+	//						
+	//						EffectConditionsProxy cond = thisEff.get_conditions();
+	//						for (size_t i = 0; i < cond.size(); i++)
+	//							conds.push_back(cond[i].get_pair());
+	//						
+	//						bool maintained = true;
+	//						for (FactPair & pre : conds){
+	//							// this is just that the DP has to be false before we apply this rule.
+	//							if (pre.var == thisEff.get_fact().get_variable().get_id()) continue;
+	//							if (definitiveEffects.count(pre)) continue;
+	//							if (maintainedFacts.count(pre)) continue;
 
-								// this could be the cause and it might not be true any more
-								maintained = false;
-							}
-							if (!maintained){
-								allCausesMaintained = false;
-								break;
-							}
-						}
-						if (allCausesMaintained){
-							if (logInference) log << "Maintain Disjunct " << var << "=" << value << endl;
-							maintainedFacts.insert(FactPair(var,value));
-							newMaintained = true;
-						}
-					}
-				} else {
-					// value = false
-					for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
-						//if (var != 10) continue;
-						// result already known
-						if (maintainedFacts.count(FactPair(var,value))) continue;
-						
-						VariableProxy varProxy = task_proxy.get_variables()[var];
-						if (logInference)
-							log << "NEG Considering derived variable " << var << " " << varProxy.get_name() << endl;
-						FactPair derivedPair(var,value);
-						
-						// compute all effects of this action
-						set<FactPair> potentialEffects;
-						set<FactPair> definitiveEffects;
-						compute_necessary_effects(op, derivedPair, maintainedFacts, potentialEffects, definitiveEffects, true);
-
-
-						if (logInference){
-							for (const FactPair & pair : definitiveEffects){
-								log << "State after: " << pair << endl;
-							}
-						}
-						if (definitiveEffects.count(derivedPair)){
-								//potentialEffects.count(derivedInverted) == 0){
-							if (logInference) log << "Maintain as Effect " << var << "=" << value << endl;
-							maintainedFacts.insert(FactPair(var,value));
-							newMaintained = true;
-							continue;
-						}
-						
-						// special case: disjunctions but this only works for derived predicates
-						if (!varProxy.is_derived()) continue;
+	//							// this could be the cause and it might not be true any more
+	//							maintained = false;
+	//						}
+	//						if (!maintained){
+	//							allCausesMaintained = false;
+	//							break;
+	//						}
+	//					}
+	//					if (allCausesMaintained){
+	//						if (logInference) log << "Maintain Disjunct " << var << "=" << value << endl;
+	//						maintainedFacts.insert(FactPair(var,value));
+	//						newMaintained = true;
+	//					}
+	//				}
+	//			} else {
+	//				// value = false
+	//				for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+	//					//if (var != 10) continue;
+	//					// result already known
+	//					if (maintainedFacts.count(FactPair(var,value))) continue;
+	//					
+	//					VariableProxy varProxy = task_proxy.get_variables()[var];
+	//					if (logInference)
+	//						log << "NEG Considering derived variable " << var << " " << varProxy.get_name() << endl;
+	//					FactPair derivedPair(var,value);
+	//					
+	//					// compute all effects of this action
+	//					set<FactPair> potentialEffects;
+	//					set<FactPair> definitiveEffects;
+	//					compute_necessary_effects(op, derivedPair, maintainedFacts, potentialEffects, definitiveEffects, true);
 
 
-						// convert to map so that we can test for contradictions more easily	
-						map<int,int> stateMap;
-						for (const FactPair & pair : definitiveEffects){
-							stateMap[pair.var] = pair.value;
-						}
-		
-						bool couldBecomeTrue = false;
-						for (OperatorProxy opProxy : achievers_per_derived[var]){
-							//log << "Operator could make it true. " << endl;
-							EffectsProxy effs = opProxy.get_effects();
-							assert(effs.size() == 1);
-							EffectProxy thisEff = effs[0];
-							assert(thisEff.get_fact().get_value() == 1);
-							assert(thisEff.get_fact().get_variable().is_derived());
-							// Preconditions
-							PreconditionsProxy precs = opProxy.get_preconditions();
-							vector<FactPair> conds;
-							
-							for (size_t pre = 0; pre < precs.size(); pre++)
-								conds.push_back(precs[pre].get_pair());
-							
-							EffectConditionsProxy cond = thisEff.get_conditions();
-							for (size_t i = 0; i < cond.size(); i++)
-								conds.push_back(cond[i].get_pair());
-							
-							bool applicable = true;
-							bool onePotentiallyNewCondition = false;
-							for (FactPair & pre : conds){
-								// this is just that the DP has to be false before we apply this rule.
-								if (pre.var == thisEff.get_fact().get_variable().get_id()) continue;
-								//log << "\tCondition " << pre << endl;
-						
-								if (potentialEffects.count(pre))
-									onePotentiallyNewCondition = true;
-		
-								if (stateMap.count(pre.var)){
-									if (stateMap[pre.var] != pre.value){
-										//log << "\t\tAction has contradicting effect" << endl;
-										applicable = false;
-										break;
-									}
-									// condition is definitely true
-									//log << "\t\tAction has supporting effect" << endl;
-									continue;
-								}
-		
-								
-								//log << "\t\tdon't know anything about this fact" << endl;
-								// we can only assume it could be true
-							}
-							//log << "\tOperator: " << applicable << " " << onePotentiallyNewCondition << endl;
-							if (applicable && onePotentiallyNewCondition) couldBecomeTrue = true;
-						}
-		
-						if (couldBecomeTrue) continue;
-						if (logInference) log << "Maintain Causes " << var << "=" << value << endl;
-						maintainedFacts.insert(FactPair(var,value));
-						newMaintained = true;
-					}
-				}
-			}
-		}
-	
-	
-		if (op == 0){
-			for (int value = 1; value >= 0; value --){
-				for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
-					FactPair derivedPair(var,value);
-					if (maintainedFacts.count(derivedPair)) continue;
-					log << "Not Maintained " << var << "=" << value << endl;
-				}
-				//exit(0);
-			}
-			//for (const FactPair & maintained : maintainedFacts)
-			//	log << "Maintain " << maintained.var << "=" << maintained.value << endl;
-		}
-	
-	}
+	//					if (logInference){
+	//						for (const FactPair & pair : definitiveEffects){
+	//							log << "State after: " << pair << endl;
+	//						}
+	//					}
+	//					if (definitiveEffects.count(derivedPair)){
+	//							//potentialEffects.count(derivedInverted) == 0){
+	//						if (logInference) log << "Maintain as Effect " << var << "=" << value << endl;
+	//						maintainedFacts.insert(FactPair(var,value));
+	//						newMaintained = true;
+	//						continue;
+	//					}
+	//					
+	//					// special case: disjunctions but this only works for derived predicates
+	//					if (!varProxy.is_derived()) continue;
+
+
+	//					// convert to map so that we can test for contradictions more easily	
+	//					map<int,int> stateMap;
+	//					for (const FactPair & pair : definitiveEffects){
+	//						stateMap[pair.var] = pair.value;
+	//					}
+	//	
+	//					bool couldBecomeTrue = false;
+	//					for (OperatorProxy opProxy : achievers_per_derived[var]){
+	//						//log << "Operator could make it true. " << endl;
+	//						EffectsProxy effs = opProxy.get_effects();
+	//						assert(effs.size() == 1);
+	//						EffectProxy thisEff = effs[0];
+	//						assert(thisEff.get_fact().get_value() == 1);
+	//						assert(thisEff.get_fact().get_variable().is_derived());
+	//						// Preconditions
+	//						PreconditionsProxy precs = opProxy.get_preconditions();
+	//						vector<FactPair> conds;
+	//						
+	//						for (size_t pre = 0; pre < precs.size(); pre++)
+	//							conds.push_back(precs[pre].get_pair());
+	//						
+	//						EffectConditionsProxy cond = thisEff.get_conditions();
+	//						for (size_t i = 0; i < cond.size(); i++)
+	//							conds.push_back(cond[i].get_pair());
+	//						
+	//						bool applicable = true;
+	//						bool onePotentiallyNewCondition = false;
+	//						for (FactPair & pre : conds){
+	//							// this is just that the DP has to be false before we apply this rule.
+	//							if (pre.var == thisEff.get_fact().get_variable().get_id()) continue;
+	//							//log << "\tCondition " << pre << endl;
+	//					
+	//							if (potentialEffects.count(pre))
+	//								onePotentiallyNewCondition = true;
+	//	
+	//							if (stateMap.count(pre.var)){
+	//								if (stateMap[pre.var] != pre.value){
+	//									//log << "\t\tAction has contradicting effect" << endl;
+	//									applicable = false;
+	//									break;
+	//								}
+	//								// condition is definitely true
+	//								//log << "\t\tAction has supporting effect" << endl;
+	//								continue;
+	//							}
+	//	
+	//							
+	//							//log << "\t\tdon't know anything about this fact" << endl;
+	//							// we can only assume it could be true
+	//						}
+	//						//log << "\tOperator: " << applicable << " " << onePotentiallyNewCondition << endl;
+	//						if (applicable && onePotentiallyNewCondition) couldBecomeTrue = true;
+	//					}
+	//	
+	//					if (couldBecomeTrue) continue;
+	//					if (logInference) log << "Maintain Causes " << var << "=" << value << endl;
+	//					maintainedFacts.insert(FactPair(var,value));
+	//					newMaintained = true;
+	//				}
+	//			}
+	//		}
+	//	}
+	//
+	//
+	//	if (op == 0){
+	//		for (int value = 1; value >= 0; value --){
+	//			for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+	//				FactPair derivedPair(var,value);
+	//				if (maintainedFacts.count(derivedPair)) continue;
+	//				log << "Not Maintained " << var << "=" << value << endl;
+	//			}
+	//			//exit(0);
+	//		}
+	//		//for (const FactPair & maintained : maintainedFacts)
+	//		//	log << "Maintain " << maintained.var << "=" << maintained.value << endl;
+	//	}
+	//
+	//}
 
 	
 	/////////// Exists step encoding
@@ -1662,11 +1665,14 @@ SearchStatus SATSearch::step() {
 	axiom_variables.resize(currentLength+1);
 	operator_variables.clear();
 	operator_variables.resize(currentLength);
+	real_operator_variables.clear();
+	real_operator_variables.resize(currentLength);
 
 	for (int time = 0; time < currentLength; time++){
 		for (size_t op = 0; op < task_proxy.get_operators().size(); op ++){
 			int opvar = capsule.new_variable();
 			operator_variables[time].push_back(opvar);
+			if (task_proxy.get_operators()[op].get_name()[0] != '#') real_operator_variables[time].push_back(opvar);
 			variableCounter["operator"]++;
 			DEBUG(capsule.registerVariable(opvar,"op " + pad_int(op) + " @ " + pad_int(time) + " " + task_proxy.get_operators()[op].get_name()));
 		}
@@ -2123,18 +2129,49 @@ SearchStatus SATSearch::step() {
 	registerClauses("state mutexes");
 	
 	// 7. Action Control
-	// currently the most simple encoding: only one action at a time
+	// connection between the real and non-real operators
+	map<int,vector<int>> realMapping;
+	for (size_t op = 0; op < task_proxy.get_operators().size(); op ++){
+		if (task_proxy.get_operators()[op].get_name()[0] != '#') continue;
+		stringstream ss;
+		ss << task_proxy.get_operators()[op].get_name();
+		string _name; ss >> _name;
+		int leaf; ss >> leaf;
+
+		while (!ss.eof()){
+			int root_op; ss >> root_op;
+			realMapping[op].push_back(root_op);
+		}
+	}
+
 	for (int time = 0; time < currentLength; time++){
-		if (operator_variables[time].size() == 0) continue;
+		if (real_operator_variables[time].size() == 0) continue;
 			
 		if (existsStep)
-			exists_step_restriction(solver,capsule,operator_variables[time]);
+			exists_step_restriction(solver,capsule,real_operator_variables[time]);
 		else
-			atMostOne(solver,capsule,operator_variables[time]);
+			atMostOne(solver,capsule,real_operator_variables[time]);
 
 		if (forceAtLeastOneAction) atLeastOne(solver,capsule,operator_variables[time]);
+	
+		registerClauses("action control");
+
+		for (const auto & [leaf_operator,real_ops] : realMapping){
+			assert(task_proxy.get_operators()[leaf_operator].get_name()[0] == '#');
+			int leaf_var = operator_variables[time][leaf_operator];
+			vector<int> realOpVars;
+			for (const int & real_op : real_ops){
+				assert(task_proxy.get_operators()[real_op].get_name()[0] != '#');
+				int real_var = operator_variables[time][real_op];
+				implies(solver,real_var,leaf_var);
+				// the real operator forces the leaf operator to be present
+				realOpVars.push_back(real_var);
+			}
+			// if the leaf operator is present, one the real operators that cause it have to be present
+			impliesOr(solver,leaf_var,realOpVars);
+		}	
+		registerClauses("action control leaf");
 	}
-	registerClauses("action control");
 
 
 	//DEBUG(capsule.printVariables());
@@ -2167,6 +2204,8 @@ SearchStatus SATSearch::step() {
 		for (int time = 0; time < currentLength; time++){
 			map<int,int> operatorsThisTime;
 			for (size_t op = 0; op < task_proxy.get_operators().size(); op++){
+				// the leaf operators don't have to be inserted into the plan
+				if (task_proxy.get_operators()[op].get_name()[0] == '#') continue;
 				int opvar = operator_variables[time][op];
 				int val = ipasir_val(solver,opvar);
 				if (val > 0){
