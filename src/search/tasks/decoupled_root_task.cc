@@ -602,9 +602,9 @@ void DecoupledRootTask::set_leaf_effects_of_operator(int op_id, ExplicitOperator
     }
 }
 
-void DecoupledRootTask::create_copy_operators(int op_id) {
+void DecoupledRootTask::create_seperate_leaf_effect_operators(int op_id) {
     for (int leaf = 0; leaf < factoring->get_num_leaves(); ++leaf) {
-        ExplicitOperator op(0, "copy_leaf_" + to_string(leaf) + "_opids", false);
+        ExplicitOperator op(0, "leafeffect_" + to_string(leaf) + "_opids", false);
         if (conclusive_leaf_encoding && is_conclusive_leaf(leaf)) {
             set_conclusive_leaf_effects_of_operator(op_id, op, leaf, conclusive_leaf_encoding);
         } else {
@@ -622,11 +622,11 @@ void DecoupledRootTask::create_copy_operators(int op_id) {
         }
 
         // Hack: Insert object to detect if contained, then extract to modify and insert
-        auto [iterator, was_inserted] = copy_operators.insert(op);
+        auto [iterator, was_inserted] = seperate_leaf_effect_operators.insert(op);
         ExplicitOperator modifiable_op = *iterator;
-        copy_operators.erase(iterator);
+        seperate_leaf_effect_operators.erase(iterator);
         modifiable_op.name += "_" + to_string(op_id);
-        copy_operators.insert(modifiable_op);
+        seperate_leaf_effect_operators.insert(modifiable_op);
     }
 }
 
@@ -645,7 +645,7 @@ void DecoupledRootTask::create_operator(int op_id) {
         assert(!new_op.effects.empty());
         assert(set<ExplicitEffect>(new_op.effects.begin(), new_op.effects.end()).size() == new_op.effects.size());
     } else {
-        create_copy_operators(op_id);
+        create_seperate_leaf_effect_operators(op_id);
     }
 
     operators.push_back(new_op);
@@ -668,7 +668,7 @@ void DecoupledRootTask::create_operators() {
     // assert(set<ExplicitOperator>(operators.begin(), operators.end()).size() == operators.size());
 
     if (!global_leave_effects) {
-        copy(copy_operators.begin(), copy_operators.end(), back_inserter(operators));
+        copy(seperate_leaf_effect_operators.begin(), seperate_leaf_effect_operators.end(), back_inserter(operators));
     }
 }
 
@@ -878,7 +878,7 @@ public:
         add_option<ConclusiveLeafEncoding>("conclusive_leaf_encoding", "Conclusive leaf encoding.", "multivalued");
         add_option<bool>("skip_unnecessary_leaf_effects", "Skip unnecessary leaf effects for operators that have no influence on the leaf.", "true");
         add_option<bool>("conclusive_operators", "Avoid conditional effects for the effects of conclusive operators on a non-conclusive leaf.", "true");
-        add_option<bool>("global_leave_effects", "Add leave effects to global operators. If false, we create separate copy operators (not a valid compilation and only useful for SAT-based planning).", "true");
+        add_option<bool>("global_leave_effects", "Add leave effects to global operators. If false, we create separate seperate_leaf_effect operators (not a valid compilation and only useful for SAT-based planning).", "true");
         add_option<bool>("dump_task", "Dumps the task to the console.", "false");
         add_option<bool>("write_sas", "Writes the decoupled task to dec_output.sas.", "false");
         add_option<bool>("normalize_variable_names", "Normalizes the variable names by numbering in the format var[x]", "false");

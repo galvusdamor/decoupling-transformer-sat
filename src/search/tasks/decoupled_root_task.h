@@ -48,7 +48,7 @@ class DecoupledRootTask : public RootTask {
 
     std::unordered_set<int> prunable_operators;
 
-    std::set<ExplicitOperator> copy_operators; 
+    std::set<ExplicitOperator> seperate_leaf_effect_operators; 
 
 public:
     DecoupledRootTask(const plugins::Options &options);
@@ -98,7 +98,7 @@ protected:
     void set_general_leaf_effects_of_operator(int op_id, ExplicitOperator &op, int leaf);
     void set_conclusive_leaf_effects_of_operator(int op_id, ExplicitOperator &op, int leaf, ConclusiveLeafEncoding encoding);
     void set_leaf_effects_of_operator(int op_id, ExplicitOperator &op);
-    void create_copy_operators(int op_id);
+    void create_seperate_leaf_effect_operators(int op_id);
     void create_operator(int op_id);
     void create_operators();
 
