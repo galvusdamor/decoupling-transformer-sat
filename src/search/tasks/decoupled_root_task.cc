@@ -625,7 +625,9 @@ void DecoupledRootTask::create_seperate_leaf_effect_operators(int op_id) {
         auto [iterator, was_inserted] = seperate_leaf_effect_operators.insert(op);
         ExplicitOperator modifiable_op = *iterator;
         seperate_leaf_effect_operators.erase(iterator);
-        modifiable_op.name += " " + to_string(op_id);
+		// new OP id for this operator
+		int new_op_id = operators.size();
+        modifiable_op.name += " " + to_string(new_op_id);
         seperate_leaf_effect_operators.insert(modifiable_op);
     }
 }
