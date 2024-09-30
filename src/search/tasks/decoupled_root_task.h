@@ -68,6 +68,10 @@ public:
 
     std::shared_ptr<AbstractTask> get_original_root_task() const;
 
+    std::shared_ptr<decoupling::Factoring> get_factoring() const {
+        return factoring;
+    }
+
 protected:
     void print_statistics() const;
     void write_sas_file(const std::string &file_name) const;
