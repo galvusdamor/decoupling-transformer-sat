@@ -136,6 +136,8 @@ public:
     bool has_pre_or_eff_on_leaf(OperatorID op_id, FactorID leaf) const;
     bool has_pre_or_eff_on_leaf(int op_id, int leaf) const;
 
+    std::vector<int> get_operator_pre_and_eff_leaves(OperatorID op_id) const;
+
     const std::vector<int> &get_center() const;
     const std::vector<std::vector<int>> &get_leaves() const;
     const std::vector<int> &get_leaf(int leaf) const;

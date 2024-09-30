@@ -557,6 +557,16 @@ bool Factoring::has_pre_or_eff_on_leaf(int op_id, int leaf) const {
     return has_pre_on_leaf(op_id, leaf) || has_eff_on_leaf(op_id, leaf);
 }
 
+vector<int> Factoring::get_operator_pre_and_eff_leaves(OperatorID op_id) const {
+    vector<int> pre_eff_leaves;
+    for (FactorID leaf(0); leaf < leaves.size(); ++leaf){
+        if (has_pre_or_eff_on_leaf(op_id, leaf)){
+            pre_eff_leaves.push_back(leaf);
+        }
+    }
+    return pre_eff_leaves;
+}
+
 const vector<int> &Factoring::get_center() const {
     return center;
 }
