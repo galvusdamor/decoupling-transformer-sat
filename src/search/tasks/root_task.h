@@ -3,6 +3,8 @@
 
 #include "../abstract_task.h"
 
+#include "../utils/hash.h"
+
 #include <vector>
 #include <set>
 
@@ -119,5 +121,12 @@ public:
 
     virtual int get_encoding_size(bool with_mutexes) const;
 };
+}
+
+namespace utils {
+inline void feed(::utils::HashState &hash_state, const tasks::ExplicitEffect &eff) {
+    feed(hash_state, eff.fact);
+    feed(hash_state, eff.conditions);
+}
 }
 #endif
