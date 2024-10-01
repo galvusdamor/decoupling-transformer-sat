@@ -4,6 +4,7 @@
 #include "root_task.h"
 
 #include "../task_proxy.h"
+#include "../utils/hash.h"
 
 #include <map>
 #include <unordered_map>
@@ -27,12 +28,12 @@ class DecoupledRootTask : public RootTask {
     std::shared_ptr<decoupling::Factoring> factoring;
 
     bool skip_unnecessary_leaf_effects;
-    bool same_leaf_preconditons_single_variable;
+    bool same_leaf_preconditions_single_variable;
     bool conclusive_operators;
     ConclusiveLeafEncoding conclusive_leaf_encoding;
     mutable std::unordered_map<int, std::unordered_set<int>> original_operator_tr_eff_vars;
 
-    bool global_leave_effects;
+    bool global_leaf_effects;
 
     std::unordered_map<int, int> center_var_to_pvar;
     std::unordered_map<int, int> conclusive_leaf_var_to_pvar;
@@ -48,7 +49,11 @@ class DecoupledRootTask : public RootTask {
 
     std::unordered_set<int> prunable_operators;
 
-    std::set<ExplicitOperator> seperate_leaf_effect_operators; 
+    // key is the "copy effect"; maps to the ExplicitOperator (below) that has this effect
+    utils::HashMap<std::vector<ExplicitEffect>, size_t> separate_leaf_effect_operators_by_effect;
+    std::vector<ExplicitOperator> separate_leaf_effect_operators;
+    // for every "copy operator" above, the list of operators that share that copy effect
+    std::vector<std::vector<OperatorID>> separate_leaf_effect_operators_to_sharing_ops;
 
 public:
     DecoupledRootTask(const plugins::Options &options);
@@ -70,6 +75,14 @@ public:
 
     std::shared_ptr<decoupling::Factoring> get_factoring() const {
         return factoring;
+    }
+
+    const std::vector<ExplicitOperator> &get_separate_leaf_effect_operators() const{
+        return separate_leaf_effect_operators;
+    }
+
+    const std::vector<OperatorID> &get_global_operators_for_separate_leaf_effect_operator(int copy_op_id) const {
+        return separate_leaf_effect_operators_to_sharing_ops[copy_op_id];
     }
 
 protected:
@@ -102,7 +115,7 @@ protected:
     void set_general_leaf_effects_of_operator(int op_id, ExplicitOperator &op, int leaf);
     void set_conclusive_leaf_effects_of_operator(int op_id, ExplicitOperator &op, int leaf, ConclusiveLeafEncoding encoding);
     void set_leaf_effects_of_operator(int op_id, ExplicitOperator &op);
-    void create_seperate_leaf_effect_operators(int op_id);
+    void create_separate_leaf_effect_operators(int op_id);
     void create_operator(int op_id);
     void create_operators();
 

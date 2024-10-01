@@ -22,10 +22,10 @@ DecoupledRootTask::DecoupledRootTask(const plugins::Options &options)
       original_root_task(dynamic_pointer_cast<RootTask>(tasks::g_root_task)),
       factoring(options.get<shared_ptr<decoupling::Factoring>>("factoring")),
       skip_unnecessary_leaf_effects(options.get<bool>("skip_unnecessary_leaf_effects")),
-      same_leaf_preconditons_single_variable(options.get<bool>("same_leaf_preconditons_single_variable")),
+      same_leaf_preconditions_single_variable(options.get<bool>("same_leaf_preconditions_single_variable")),
       conclusive_operators(options.get<bool>("conclusive_operators")),
       conclusive_leaf_encoding(options.get<ConclusiveLeafEncoding>("conclusive_leaf_encoding")),
-      global_leave_effects(options.get<bool>("global_leave_effects")) {
+      global_leaf_effects(options.get<bool>("global_leaf_effects")) {
     TaskProxy original_task_proxy(*original_root_task);
     task_properties::verify_no_axioms(original_task_proxy);
     task_properties::verify_no_conditional_effects(original_task_proxy);
@@ -324,7 +324,7 @@ void DecoupledRootTask::create_precondition_variables() {
                 continue;
 
             // We have not seen this precondition and create a new secondary variable for it
-            if (!same_leaf_preconditons_single_variable || precondition_to_svar.count(leaf_pre) == 0) {
+            if (!same_leaf_preconditions_single_variable || precondition_to_svar.count(leaf_pre) == 0) {
                 string name = "op-s(" + factoring->get_leaf_name(leaf) + "-" + no_space_op_name + ")";
                 variables.emplace_back(name, get_fact_names(name), 0);
                 precondition_to_svar[leaf_pre] = variables.size() - 1;
@@ -602,7 +602,7 @@ void DecoupledRootTask::set_leaf_effects_of_operator(int op_id, ExplicitOperator
     }
 }
 
-void DecoupledRootTask::create_seperate_leaf_effect_operators(int op_id) {
+void DecoupledRootTask::create_separate_leaf_effect_operators(int op_id) {
     for (int leaf = 0; leaf < factoring->get_num_leaves(); ++leaf) {
         ExplicitOperator op(0, "#leaf " + to_string(leaf), false);
         if (conclusive_leaf_encoding && is_conclusive_leaf(leaf)) {
@@ -621,14 +621,18 @@ void DecoupledRootTask::create_seperate_leaf_effect_operators(int op_id) {
             }
         }
 
-        // Hack: Insert object to detect if contained, then extract to modify and insert
-        auto [iterator, was_inserted] = seperate_leaf_effect_operators.insert(op);
-        ExplicitOperator modifiable_op = *iterator;
-        seperate_leaf_effect_operators.erase(iterator);
-		// new OP id for this operator
-		int new_op_id = operators.size();
-        modifiable_op.name += " " + to_string(new_op_id);
-        seperate_leaf_effect_operators.insert(modifiable_op);
+        // need to sort the effects to properly hash operator effects
+        std::sort(op.effects.begin(), op.effects.end());
+        auto it = separate_leaf_effect_operators_by_effect.find(op.effects);
+        if (it == separate_leaf_effect_operators_by_effect.end()){
+            separate_leaf_effect_operators_by_effect.insert({op.effects, separate_leaf_effect_operators.size()});
+            separate_leaf_effect_operators_to_sharing_ops.emplace_back(1, OperatorID(op_id));
+            op.name += to_string(separate_leaf_effect_operators.size());
+            separate_leaf_effect_operators.push_back(std::move(op));
+        } else {
+            size_t copy_op_id = it->second;
+            separate_leaf_effect_operators_to_sharing_ops[copy_op_id].emplace_back(op_id);
+        }
     }
 }
 
@@ -642,12 +646,12 @@ void DecoupledRootTask::create_operator(int op_id) {
     assert(set<FactPair>(new_op.preconditions.begin(), new_op.preconditions.end()).size() == new_op.preconditions.size());
 
     set_center_effects_of_operator(op_id, new_op);
-    if (global_leave_effects) {
+    if (global_leaf_effects) {
         set_leaf_effects_of_operator(op_id, new_op);
         assert(!new_op.effects.empty());
         assert(set<ExplicitEffect>(new_op.effects.begin(), new_op.effects.end()).size() == new_op.effects.size());
     } else {
-        create_seperate_leaf_effect_operators(op_id);
+        create_separate_leaf_effect_operators(op_id);
     }
 
     operators.push_back(new_op);
@@ -668,10 +672,6 @@ void DecoupledRootTask::create_operators() {
     assert((int)operators.size() <= factoring->get_num_global_operators());
     // We can have duplicated actions (not pruned by FD translator)
     // assert(set<ExplicitOperator>(operators.begin(), operators.end()).size() == operators.size());
-
-    if (!global_leave_effects) {
-        copy(seperate_leaf_effect_operators.begin(), seperate_leaf_effect_operators.end(), back_inserter(operators));
-    }
 }
 
 void DecoupledRootTask::create_frame_axioms() {
@@ -876,11 +876,11 @@ public:
             "A decoupled transformation of the root task.");
 
         add_option<shared_ptr<decoupling::Factoring>>("factoring", "method that computes the factoring.");
-        add_option<bool>("same_leaf_preconditons_single_variable", "The same preconditions of leaves have a single secondary variable.", "true");
+        add_option<bool>("same_leaf_preconditions_single_variable", "The same preconditions of leaves have a single secondary variable.", "true");
         add_option<ConclusiveLeafEncoding>("conclusive_leaf_encoding", "Conclusive leaf encoding.", "multivalued");
         add_option<bool>("skip_unnecessary_leaf_effects", "Skip unnecessary leaf effects for operators that have no influence on the leaf.", "true");
         add_option<bool>("conclusive_operators", "Avoid conditional effects for the effects of conclusive operators on a non-conclusive leaf.", "true");
-        add_option<bool>("global_leave_effects", "Add leave effects to global operators. If false, we create separate seperate_leaf_effect operators (not a valid compilation and only useful for SAT-based planning).", "true");
+        add_option<bool>("global_leaf_effects", "Add leave effects to global operators. If false, we create separate seperate_leaf_effect operators (not a valid compilation and only useful for SAT-based planning).", "true");
         add_option<bool>("dump_task", "Dumps the task to the console.", "false");
         add_option<bool>("write_sas", "Writes the decoupled task to dec_output.sas.", "false");
         add_option<bool>("normalize_variable_names", "Normalizes the variable names by numbering in the format var[x]", "false");
