@@ -602,8 +602,9 @@ void DecoupledRootTask::set_leaf_effects_of_operator(int op_id, ExplicitOperator
     }
 }
 
-void DecoupledRootTask::create_separate_leaf_effect_operators(int op_id) {
-    for (int leaf = 0; leaf < factoring->get_num_leaves(); ++leaf) {
+std::vector<ExplicitOperator> DecoupledRootTask::create_separate_leaf_effect_operators(int op_id) {
+    std::vector<ExplicitOperator> new_leaf_operators;
+	for (int leaf = 0; leaf < factoring->get_num_leaves(); ++leaf) {
         ExplicitOperator op(0, "#leaf " + to_string(leaf), false);
         if (conclusive_leaf_encoding && is_conclusive_leaf(leaf)) {
             set_conclusive_leaf_effects_of_operator(op_id, op, leaf, conclusive_leaf_encoding);
@@ -625,15 +626,17 @@ void DecoupledRootTask::create_separate_leaf_effect_operators(int op_id) {
         std::sort(op.effects.begin(), op.effects.end());
         auto it = separate_leaf_effect_operators_by_effect.find(op.effects);
         if (it == separate_leaf_effect_operators_by_effect.end()){
-            separate_leaf_effect_operators_by_effect.insert({op.effects, separate_leaf_effect_operators.size()});
-            separate_leaf_effect_operators_to_sharing_ops.emplace_back(1, OperatorID(op_id));
-            op.name += to_string(separate_leaf_effect_operators.size());
-            separate_leaf_effect_operators.push_back(std::move(op));
+            separate_leaf_effect_operators_by_effect.insert({op.effects, separate_leaf_effect_operators.size() + new_leaf_operators.size()});
+            separate_leaf_effect_operators_to_sharing_ops.emplace_back(1, OperatorID(operators.size()));
+            op.name += " " + to_string(separate_leaf_effect_operators.size() + new_leaf_operators.size());
+
+			new_leaf_operators.push_back(std::move(op));
         } else {
             size_t copy_op_id = it->second;
-            separate_leaf_effect_operators_to_sharing_ops[copy_op_id].emplace_back(op_id);
+            separate_leaf_effect_operators_to_sharing_ops[copy_op_id].emplace_back(operators.size());
         }
     }
+	return new_leaf_operators;
 }
 
 void DecoupledRootTask::create_operator(int op_id) {
@@ -651,13 +654,19 @@ void DecoupledRootTask::create_operator(int op_id) {
         assert(!new_op.effects.empty());
         assert(set<ExplicitEffect>(new_op.effects.begin(), new_op.effects.end()).size() == new_op.effects.size());
     } else {
-        create_separate_leaf_effect_operators(op_id);
+        std::vector<ExplicitOperator> new_leaf_operators = create_separate_leaf_effect_operators(op_id);
+		for (const ExplicitOperator & leafop : new_leaf_operators){
+			// add the artificial operator to the global operator list
+            separate_leaf_effect_operators.push_back(OperatorID(operators.size()));
+            operators.push_back(leafop);
+		}
     }
 
     operators.push_back(new_op);
 }
 
 void DecoupledRootTask::create_operators() {
+	int remaining_global_operators = 0;
     for (size_t op_id = 0; op_id < original_root_task->operators.size(); ++op_id) {
         if (is_prunable_operator(op_id)) {
             continue;
@@ -665,11 +674,13 @@ void DecoupledRootTask::create_operators() {
 
         if (factoring->is_global_operator(op_id)) {
             create_operator(op_id);
+			remaining_global_operators++;
             global_op_id_to_original_op_id[operators.size() - 1] = op_id;
             original_op_id_to_global_op_id[op_id] = operators.size() - 1;
         }
     }
-    assert((int)operators.size() <= factoring->get_num_global_operators());
+    assert(remaining_global_operators <= factoring->get_num_global_operators());
+    //assert((int)operators.size() <= factoring->get_num_global_operators());
     // We can have duplicated actions (not pruned by FD translator)
     // assert(set<ExplicitOperator>(operators.begin(), operators.end()).size() == operators.size());
 }

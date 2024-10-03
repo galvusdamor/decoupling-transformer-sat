@@ -51,7 +51,7 @@ class DecoupledRootTask : public RootTask {
 
     // key is the "copy effect"; maps to the ExplicitOperator (below) that has this effect
     utils::HashMap<std::vector<ExplicitEffect>, size_t> separate_leaf_effect_operators_by_effect;
-    std::vector<ExplicitOperator> separate_leaf_effect_operators;
+    std::vector<OperatorID> separate_leaf_effect_operators;
     // for every "copy operator" above, the list of operators that share that copy effect
     std::vector<std::vector<OperatorID>> separate_leaf_effect_operators_to_sharing_ops;
 
@@ -77,7 +77,7 @@ public:
         return factoring;
     }
 
-    const std::vector<ExplicitOperator> &get_separate_leaf_effect_operators() const{
+    const std::vector<OperatorID> &get_separate_leaf_effect_operators() const{
         return separate_leaf_effect_operators;
     }
 
@@ -115,7 +115,7 @@ protected:
     void set_general_leaf_effects_of_operator(int op_id, ExplicitOperator &op, int leaf);
     void set_conclusive_leaf_effects_of_operator(int op_id, ExplicitOperator &op, int leaf, ConclusiveLeafEncoding encoding);
     void set_leaf_effects_of_operator(int op_id, ExplicitOperator &op);
-    void create_separate_leaf_effect_operators(int op_id);
+    std::vector<ExplicitOperator> create_separate_leaf_effect_operators(int op_id);
     void create_operator(int op_id);
     void create_operators();
 
