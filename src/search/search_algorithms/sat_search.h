@@ -2,6 +2,7 @@
 #define SEARCH_ALGORITHMS_EAGER_SEARCH_H
 
 #include "../search_algorithm.h"
+#include "../tasks/decoupled_root_task.h"
 #include "sat_encoder.h"
 
 #include <memory>
@@ -40,11 +41,13 @@ struct AxiomSCC{
 };
 
 class SATSearch : public SearchAlgorithm {
+    std::shared_ptr<tasks::DecoupledRootTask> decoupledTask;
+	
 	// debugging / output configuration
 	bool logInference = false;
 	
 	// actual run configuration
-	bool decouplingMode = true;
+	bool decouplingMode = false;
 	int planLength;
 	int currentLength;
 	int lengthIteration;
@@ -53,6 +56,8 @@ class SATSearch : public SearchAlgorithm {
 	bool existsStep = true;
 
 	bool forceAtLeastOneAction;
+
+	std::vector<bool> is_leaf_operator;
 
 	// index: timestep -> variable -> value
 	std::vector<std::vector<std::vector<int>>> fact_variables;
@@ -98,7 +103,6 @@ class SATSearch : public SearchAlgorithm {
 
 
 	std::set<FactPair> compute_known_prior_state(int op, FactPair assumedFact);
-	bool myDFS(int cur, int tgt, std::vector<std::vector<int>> & disabling_graph, std::set<int> & visi);
 
 
 	// exists step
