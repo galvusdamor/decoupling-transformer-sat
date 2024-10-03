@@ -18,4 +18,5 @@ extern std::string format_journal_reference(
     const std::string &year);
 }
 
+void graph_to_dot(std::vector<std::vector<int>> graph, std::string filename);
 #endif

@@ -2,6 +2,7 @@
 
 #include <cassert>
 #include <sstream>
+#include <fstream>
 
 using namespace std;
 
@@ -57,4 +58,18 @@ string format_journal_reference(
        << t2t_escape(year) << ".\n\n\n";
     return ss.str();
 }
+
+void graph_to_dot(vector<vector<int>> graph, string filename){
+	fstream fs (filename, fstream::out);
+	fs << "digraph g {" << endl;
+	for (size_t op = 0; op < graph.size(); op++)
+		fs << "  n" << op << ";" << endl;
+	
+	for (size_t op = 0; op < graph.size(); op++)
+		for (size_t i = 0; i < graph[op].size(); i++)
+			fs << "  n" << op << " -> n" << graph[op][i] << ";" << endl;
+	fs << "}" << endl;
+	fs.close();
+}
+
 }
