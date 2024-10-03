@@ -16,6 +16,8 @@
 #include "../tasks/decoupled_root_task.h"
 #include "../task_utils/task_properties.h"
 
+#include "../decoupling/factoring.h"
+
 #include "sat_encoder.h"
 #include "ipasir.h"
 
@@ -98,7 +100,7 @@ void SATSearch::initialize() {
 
 	// detect leaf operators
 	is_leaf_operator.resize(task_proxy.get_operators().size());
-	int number_of_non_leaf_operators = task_proxy.get_operators().size();
+	size_t number_of_non_leaf_operators = task_proxy.get_operators().size();
 
 	if (decouplingMode){
 		for (size_t leaf_op_id = 0; leaf_op_id < decoupledTask->get_separate_leaf_effect_operators().size(); leaf_op_id++){
@@ -114,33 +116,33 @@ void SATSearch::initialize() {
 	//}
 
 
-	achiever.resize(task_proxy.get_variables().size());
-	deleter.resize(task_proxy.get_variables().size());
-	for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
-		VariableProxy varProxy = task_proxy.get_variables()[var];
-		achiever[var].resize(varProxy.get_domain_size());
-		deleter[var].resize(varProxy.get_domain_size());
-	}
+	//achiever.resize(task_proxy.get_variables().size());
+	//deleter.resize(task_proxy.get_variables().size());
+	//for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+	//	VariableProxy varProxy = task_proxy.get_variables()[var];
+	//	achiever[var].resize(varProxy.get_domain_size());
+	//	deleter[var].resize(varProxy.get_domain_size());
+	//}
 
-	for (size_t op = 0; op < task_proxy.get_operators().size(); op ++){
-		OperatorProxy opProxy = task_proxy.get_operators()[op];
-		if (is_leaf_operator[op]) continue;
+	//for (size_t op = 0; op < task_proxy.get_operators().size(); op ++){
+	//	OperatorProxy opProxy = task_proxy.get_operators()[op];
+	//	if (is_leaf_operator[op]) continue;
 
-		// Effect
-		EffectsProxy effs = opProxy.get_effects();
-		for (size_t eff = 0; eff < effs.size(); eff++){
-			EffectProxy thisEff = effs[eff];
+	//	// Effect
+	//	EffectsProxy effs = opProxy.get_effects();
+	//	for (size_t eff = 0; eff < effs.size(); eff++){
+	//		EffectProxy thisEff = effs[eff];
 
-			achiever[thisEff.get_fact().get_variable().get_id()][thisEff.get_fact().get_value()].push_back(op);
+	//		achiever[thisEff.get_fact().get_variable().get_id()][thisEff.get_fact().get_value()].push_back(op);
 
-			// implicit deleting effects, i.e. delete any value of the variable that is set
-			for (int val = 0; val < thisEff.get_fact().get_variable().get_domain_size(); val++){
-				if (val == thisEff.get_fact().get_value()) continue;
-		
-				deleter[thisEff.get_fact().get_variable().get_id()][val].push_back(op);
-			}
-		}
-	}
+	//		// implicit deleting effects, i.e. delete any value of the variable that is set
+	//		for (int val = 0; val < thisEff.get_fact().get_variable().get_domain_size(); val++){
+	//			if (val == thisEff.get_fact().get_value()) continue;
+	//	
+	//			deleter[thisEff.get_fact().get_variable().get_id()][val].push_back(op);
+	//		}
+	//	}
+	//}
 
 
 	derived_implication.clear();
@@ -557,11 +559,14 @@ void SATSearch::set_up_exists_step() {
 	// compute the disabling graph
 	map<FactPair,set<int>> needingActions;
 	map<FactPair,set<int>> deletingActions;
+	map<int,vector<int>> affectingLeaf;
 	for(size_t op = 0; op < task_proxy.get_operators().size(); op ++){
 		if (op % 100 == 0)
 			log << "Disabling Graph Operator " << op << " of " << task_proxy.get_operators().size() << endl;
-		OperatorProxy opProxy = task_proxy.get_operators()[op];
+		// leaf operators are handled differently
+		if (is_leaf_operator[op]) continue;
 
+		OperatorProxy opProxy = task_proxy.get_operators()[op];
 		PreconditionsProxy precs = opProxy.get_preconditions();
 		map<int,int> preMap;
 		for (size_t pre = 0; pre < precs.size(); pre++){
@@ -569,8 +574,6 @@ void SATSearch::set_up_exists_step() {
 			needingActions[fact.get_pair()].insert(op);
 			preMap[fact.get_variable().get_id()] = fact.get_value();
 		}
-
-		map<FactPair, vector< vector<FactPair>>> effects;
 
 		EffectsProxy effs = opProxy.get_effects();
 		for (size_t eff = 0; eff < effs.size(); eff++){
@@ -584,10 +587,6 @@ void SATSearch::set_up_exists_step() {
 				conditions.push_back(condition.get_pair());
 			}
 
-			if (decouplingMode){
-				effects[thisEff.get_fact().get_pair()].push_back(conditions);
-			}
-			
 			// implicit deleting effects, i.e. delete any value of the variable that is set
 			for (int val = 0; val < thisEff.get_fact().get_variable().get_domain_size(); val++){
 				if (val == thisEff.get_fact().get_value()) continue;
@@ -620,22 +619,18 @@ void SATSearch::set_up_exists_step() {
 
 
 		if (decouplingMode){
+			std::shared_ptr<decoupling::Factoring> factoring = decoupledTask->get_factoring();
+			int factoring_op_id = decoupledTask->get_original_operator_id(op);
+			vector<int> affectedLeafs = factoring->get_operator_pre_and_eff_leaves(OperatorID(factoring_op_id));
 
-			for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
-				VariableProxy varProxy = task_proxy.get_variables()[var];
-				if (!varProxy.is_derived()) continue; // those are determined above
-
-				// negative maintenance - i.e. if the fact was false, we try to keep it false
-				FactPair derivedTarget(var,0);
-				
-				// we could not ensure that this fact remains true to it might get deleted
-				deletingActions[derivedTarget].insert(op);
-				if (logInference) log << "Op " << op << " deleting " << derivedTarget.var << "=" << derivedTarget.value << endl;
-			}
+			for (int l : affectedLeafs)
+				affectingLeaf[l].push_back(op);
 		}
 	}
-
 	
+	for (const auto & [_leaf, operators] : affectingLeaf)
+		decoupling_at_most_one_groups.insert(operators);
+
 	// prepare data structures needed for compatibility checking
 	// TODO: copied from pruning/stubborn_sets.cc maybe create common super class
     sorted_op_preconditions = utils::map_vector<vector<FactPair>>(
@@ -710,6 +705,9 @@ void SATSearch::set_up_exists_step() {
 
 	// go backwards though the SCCs
 	for (int scc = disabling_sccs.size() - 1; scc >= 0; scc--){
+		// artificial leaf operator action
+		if (disabling_sccs[scc].size() == 1 && is_leaf_operator[disabling_sccs[scc][0]]) continue;
+
 		//log << "\t SCC No " << scc << endl;
 		for (size_t i = 0; i < disabling_sccs[scc].size(); i++){
 		//for (int i = disabling_sccs[scc].size() - 1; i >= 0; i--){
@@ -718,8 +716,6 @@ void SATSearch::set_up_exists_step() {
 			//log << "\t\t Operator " << opID << " " << task_proxy.get_operators()[opID].get_name() << endl;
 		}
 	}
-
-	assert(global_action_ordering.size() == task_proxy.get_operators().size());
 
 	for (auto & [factPair, _ignore] : deletingActions){
 		erasingList[factPair].resize(disabling_sccs.size());
@@ -792,6 +788,15 @@ void SATSearch::exists_step_restriction(void* solver,sat_capsule & capsule,vecto
 			if (E.size() == 0 || R.size() == 0) continue;
 			generateChain(solver,capsule,operator_variables,E,R);
 		}
+	}
+
+	// decouplings generate at most one constraints on their leafs
+	for (const vector<int> & amogroup : decoupling_at_most_one_groups){
+		vector<int> amo_operators;
+		for (const int & op : amogroup)
+			amo_operators.push_back(operator_variables[op]);
+
+		atMostOne(solver,capsule,amo_operators);
 	}
 }
 
@@ -1155,7 +1160,7 @@ SearchStatus SATSearch::step() {
 
 					for (int var : scc.variables){
 						assert(task_proxy.get_variables()[var].is_derived());
-						assert(axiom_variables[time][var].size() > layer+1);
+						assert(axiom_variables[time][var].size() > size_t(layer)+1);
 						int eff_var = axiom_variables[time][var][layer+1];
 						impliesOr(solver,eff_var,causeVariables[var]);
 						assert(causeVariables[var].size());

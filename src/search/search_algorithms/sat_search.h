@@ -71,9 +71,9 @@ class SATSearch : public SearchAlgorithm {
 	int get_axiom_var(int time, int layer, FactProxy fact);
 	int get_last_axiom_var(int time, FactProxy fact);
 
-	// variable -> value -> list of actions
-	std::vector<std::vector<std::vector<int>>> achiever;
-	std::vector<std::vector<std::vector<int>>> deleter;
+	//// variable -> value -> list of actions
+	//std::vector<std::vector<std::vector<int>>> achiever;
+	//std::vector<std::vector<std::vector<int>>> deleter;
 
 	// axiom structure graph
 	std::vector<std::vector<int>> derived_implication;
@@ -115,6 +115,8 @@ class SATSearch : public SearchAlgorithm {
 	// per fact, per SCC, gives a list of all E/R as a pair: <operator,position_in_scc>
 	std::map<FactPair,std::vector< std::vector<std::pair<int,int>>  >> erasingList;
 	std::map<FactPair,std::vector< std::vector<std::pair<int,int>>  >> requiringList;
+
+	std::set<std::vector<int>> decoupling_at_most_one_groups;
 	
 	void exists_step_restriction(void* solver,sat_capsule & capsule, std::vector<int> & operator_variables);
 	void generateChain(void* solver,sat_capsule & capsule, std::vector<int> & operator_variables,
