@@ -97,12 +97,12 @@ DecoupledRootTask::DecoupledRootTask(const plugins::Options &options)
 }
 
 int DecoupledRootTask::get_original_operator_id(int op_id) const {
-    if (original_op_id_to_global_op_id.count(op_id) == 0) {
+    if (global_op_id_to_original_op_id.count(op_id) == 0) {
         assert(!factoring->is_global_operator(op_id));
         return -1;
     }
 
-    return original_op_id_to_global_op_id.at(op_id);
+    return global_op_id_to_original_op_id.at(op_id);
 }
 
 void DecoupledRootTask::reconstruct_plan_if_necessary(vector<OperatorID> &path,
@@ -639,7 +639,7 @@ std::vector<ExplicitOperator> DecoupledRootTask::create_separate_leaf_effect_ope
 	return new_leaf_operators;
 }
 
-void DecoupledRootTask::create_operator(int op_id) {
+int DecoupledRootTask::create_operator(int op_id) {
     assert(factoring->is_global_operator(op_id));
     const auto &op = original_root_task->operators[op_id];
     assert(!op.is_an_axiom);
@@ -653,16 +653,20 @@ void DecoupledRootTask::create_operator(int op_id) {
         set_leaf_effects_of_operator(op_id, new_op);
         assert(!new_op.effects.empty());
         assert(set<ExplicitEffect>(new_op.effects.begin(), new_op.effects.end()).size() == new_op.effects.size());
+    	operators.push_back(new_op);
+		return operators.size() - 1;
     } else {
         std::vector<ExplicitOperator> new_leaf_operators = create_separate_leaf_effect_operators(op_id);
+		// need to insert this one first as our indexing depends on it!
+		int new_op_id = operators.size();
+		operators.push_back(new_op);
 		for (const ExplicitOperator & leafop : new_leaf_operators){
 			// add the artificial operator to the global operator list
             separate_leaf_effect_operators.push_back(OperatorID(operators.size()));
             operators.push_back(leafop);
 		}
+		return new_op_id;
     }
-
-    operators.push_back(new_op);
 }
 
 void DecoupledRootTask::create_operators() {
@@ -673,10 +677,10 @@ void DecoupledRootTask::create_operators() {
         }
 
         if (factoring->is_global_operator(op_id)) {
-            create_operator(op_id);
+            int new_op_id = create_operator(op_id);
 			remaining_global_operators++;
-            global_op_id_to_original_op_id[operators.size() - 1] = op_id;
-            original_op_id_to_global_op_id[op_id] = operators.size() - 1;
+            global_op_id_to_original_op_id[new_op_id] = op_id;
+            original_op_id_to_global_op_id[op_id] = new_op_id;
         }
     }
     assert(remaining_global_operators <= factoring->get_num_global_operators());

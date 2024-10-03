@@ -116,7 +116,7 @@ protected:
     void set_conclusive_leaf_effects_of_operator(int op_id, ExplicitOperator &op, int leaf, ConclusiveLeafEncoding encoding);
     void set_leaf_effects_of_operator(int op_id, ExplicitOperator &op);
     std::vector<ExplicitOperator> create_separate_leaf_effect_operators(int op_id);
-    void create_operator(int op_id);
+    int create_operator(int op_id);
     void create_operators();
 
     // axioms
