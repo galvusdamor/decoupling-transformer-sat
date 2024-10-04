@@ -1343,21 +1343,6 @@ SearchStatus SATSearch::step() {
 	registerClauses("state mutexes");
 	
 	// 7. Action Control
-	// connection between the real and non-real operators
-	map<int,vector<int>> realMapping;
-	for (size_t op = 0; op < task_proxy.get_operators().size(); op ++){
-		if (task_proxy.get_operators()[op].get_name()[0] != '#') continue;
-		stringstream ss;
-		ss << task_proxy.get_operators()[op].get_name();
-		string _name; ss >> _name;
-		int leaf; ss >> leaf;
-
-		while (!ss.eof()){
-			int root_op; ss >> root_op;
-			realMapping[op].push_back(root_op);
-		}
-	}
-
 	for (int time = 0; time < currentLength; time++){
 		if (real_operator_variables[time].size() == 0) continue;
 			
@@ -1426,7 +1411,7 @@ SearchStatus SATSearch::step() {
 			map<int,int> operatorsThisTime;
 			for (size_t op = 0; op < task_proxy.get_operators().size(); op++){
 				// the leaf operators don't have to be inserted into the plan
-				if (task_proxy.get_operators()[op].get_name()[0] == '#') continue;
+				if (is_leaf_operator[op]) continue;
 				int opvar = operator_variables[time][op];
 				int val = ipasir_val(solver,opvar);
 				if (val > 0){
