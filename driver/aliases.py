@@ -142,6 +142,15 @@ ALIASES["decoupled-lama-first"] = [
     """lazy_greedy([hff,hlm],preferred=[hff,hlm],
                                cost_type=one,reopen_closed=false)))"""]
 
+ALIASES["decoupled-lama-first-leaves08"] = [
+    "--root-task-transform",
+    "decoupled(factoring=lp(factoring_time_limit=30, strategy=mml, min_flexibility=0.8, add_cg_sccs=true, max_leaf_size=1000000))",
+    "--search",
+    "let(hlm, landmark_sum(lm_factory=lm_reasonable_orders_hps(lm_rhw()),transform=adapt_costs(one),pref=false),"
+    "let(hff, ff(transform=adapt_costs(one)),"
+    """lazy_greedy([hff,hlm],preferred=[hff,hlm],
+                               cost_type=one,reopen_closed=false)))"""]
+
 ALIASES["miura-lama-first"] = [
     "--root-task-transform",
     "decoupled(factoring=mf())",
