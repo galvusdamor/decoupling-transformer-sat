@@ -54,6 +54,7 @@ class SATSearch : public SearchAlgorithm {
 	int startLength;
 	double multiplier;
 	bool existsStep = true;
+	bool agressiveDecoupledExistsStep;
 
 	bool forceAtLeastOneAction;
 

@@ -36,7 +36,8 @@ SATSearch::SATSearch(const plugins::Options &opts)
 
 	switch (opts.get<int>("encoding")){
 		case 0: existsStep = false; break;
-		case 2: existsStep = true; break;
+		case 2: existsStep = true; agressiveDecoupledExistsStep = false; break;
+		case 3: existsStep = true; agressiveDecoupledExistsStep = true; break;
 		default:
 			log << "Error: encoding No " << opts.get<int>("encoding") << " is not supported" << endl;
 			exit(-1);
@@ -566,70 +567,164 @@ void SATSearch::set_up_exists_step() {
 		// leaf operators are handled differently
 		if (is_leaf_operator[op]) continue;
 
-		OperatorProxy opProxy = task_proxy.get_operators()[op];
-		PreconditionsProxy precs = opProxy.get_preconditions();
-		map<int,int> preMap;
-		for (size_t pre = 0; pre < precs.size(); pre++){
-			FactProxy fact = precs[pre];
-			needingActions[fact.get_pair()].insert(op);
-			preMap[fact.get_variable().get_id()] = fact.get_value();
-		}
 
-		EffectsProxy effs = opProxy.get_effects();
-		for (size_t eff = 0; eff < effs.size(); eff++){
-			EffectProxy thisEff = effs[eff];
-			// gather the conditions of the conditional effect 
-			EffectConditionsProxy cond = thisEff.get_conditions();
-			vector<FactPair> conditions;
-			for (size_t i = 0; i < cond.size(); i++){
-				FactProxy condition = cond[i];
-				needingActions[condition.get_pair()].insert(op);
-				conditions.push_back(condition.get_pair());
+		if (!agressiveDecoupledExistsStep){
+			OperatorProxy opProxy = task_proxy.get_operators()[op];
+			PreconditionsProxy precs = opProxy.get_preconditions();
+			map<int,int> preMap;
+			for (size_t pre = 0; pre < precs.size(); pre++){
+				FactProxy fact = precs[pre];
+				needingActions[fact.get_pair()].insert(op);
+				preMap[fact.get_variable().get_id()] = fact.get_value();
 			}
 
-			// implicit deleting effects, i.e. delete any value of the variable that is set
-			for (int val = 0; val < thisEff.get_fact().get_variable().get_domain_size(); val++){
-				if (val == thisEff.get_fact().get_value()) continue;
-				if (preMap.count(thisEff.get_fact().get_variable().get_id()) &&
-					preMap[thisEff.get_fact().get_variable().get_id()] != val)
-					continue;
-		
-				FactPair deletedFact(thisEff.get_fact().get_variable().get_id(),val);
-				deletingActions[deletedFact].insert(op);
+			EffectsProxy effs = opProxy.get_effects();
+			for (size_t eff = 0; eff < effs.size(); eff++){
+				EffectProxy thisEff = effs[eff];
+				// gather the conditions of the conditional effect 
+				EffectConditionsProxy cond = thisEff.get_conditions();
+				vector<FactPair> conditions;
+				for (size_t i = 0; i < cond.size(); i++){
+					FactProxy condition = cond[i];
+					needingActions[condition.get_pair()].insert(op);
+					conditions.push_back(condition.get_pair());
+				}
 
-				if (decouplingMode) continue; // we determine the effects on derived predicates differently
+				// implicit deleting effects, i.e. delete any value of the variable that is set
+				for (int val = 0; val < thisEff.get_fact().get_variable().get_domain_size(); val++){
+					if (val == thisEff.get_fact().get_value()) continue;
+					if (preMap.count(thisEff.get_fact().get_variable().get_id()) &&
+						preMap[thisEff.get_fact().get_variable().get_id()] != val)
+						continue;
+			
+					FactPair deletedFact(thisEff.get_fact().get_variable().get_id(),val);
+					deletingActions[deletedFact].insert(op);
 
-				// treat operators that have an effect that can make a derived fact false as if they were deletes of that fact
-				for (int & start : derived_entry_edges[deletedFact]){
-					set<int> allReachable;
-					axiom_dfs(start,allReachable);
+					if (decouplingMode) continue; // we determine the effects on derived predicates differently
 
-					// if we delete the entry point, any of the connected axioms might become false
-					for (const int & reach : allReachable){
-						// if derived is maintained, it cannot be deleted.
-						//if (maintainedFactsByOperator[op].count(FactPair(reach,1)) &&
-						//	maintainedFactsByOperator[op].count(FactPair(reach,0))
-						//		) continue;
-						deletingActions[FactPair(reach,1)].insert(op);
+					// treat operators that have an effect that can make a derived fact false as if they were deletes of that fact
+					for (int & start : derived_entry_edges[deletedFact]){
+						set<int> allReachable;
+						axiom_dfs(start,allReachable);
+
+						// if we delete the entry point, any of the connected axioms might become false
+						for (const int & reach : allReachable){
+							// if derived is maintained, it cannot be deleted.
+							//if (maintainedFactsByOperator[op].count(FactPair(reach,1)) &&
+							//	maintainedFactsByOperator[op].count(FactPair(reach,0))
+							//		) continue;
+							deletingActions[FactPair(reach,1)].insert(op);
+						}
 					}
 				}
 			}
-		}
 
 
 
-		if (decouplingMode){
+			if (decouplingMode){
+				std::shared_ptr<decoupling::Factoring> factoring = decoupledTask->get_factoring();
+				int factoring_op_id = decoupledTask->get_original_operator_id(op);
+				vector<int> affectedLeafs = factoring->get_operator_pre_and_eff_leaves(OperatorID(factoring_op_id));
+
+				for (int l : affectedLeafs)
+					affectingLeaf[l].push_back(op);
+			}
+		} else {
+			assert(decouplingMode);
+			assert(agressiveDecoupledExistsStep);
+			log << "Computing Aggressive Disabling in Decoupling Mode." << endl;
+
 			std::shared_ptr<decoupling::Factoring> factoring = decoupledTask->get_factoring();
-			int factoring_op_id = decoupledTask->get_original_operator_id(op);
-			vector<int> affectedLeafs = factoring->get_operator_pre_and_eff_leaves(OperatorID(factoring_op_id));
+			TaskProxy originalTask = decoupledTask->get_task_proxy_for_plan_saving();
+			int original_op_id = decoupledTask->get_original_operator_id(op);
+			log << "Op " << op << " is originally " << original_op_id << endl;
 
-			for (int l : affectedLeafs)
-				affectingLeaf[l].push_back(op);
+
+			OperatorProxy opProxy = originalTask.get_operators()[original_op_id];
+			PreconditionsProxy precs = opProxy.get_preconditions();
+			map<int,int> preMap;
+			for (size_t pre = 0; pre < precs.size(); pre++){
+				FactProxy fact = precs[pre];
+				needingActions[fact.get_pair()].insert(op);
+				//log << "Op " << task_proxy.get_operators()[op].get_name() << " needs " <<
+				//	originalTask.get_variables()[fact.get_pair().var].get_name() << " " <<
+				//	originalTask.get_variables()[fact.get_pair().var].get_fact(fact.get_pair().value).get_name() << endl;
+				preMap[fact.get_variable().get_id()] = fact.get_value();
+			}
+
+			// preconditions are potentially also effects as they reduce reachability in the leaf state space.
+			map<int,int> effMap;
+			for (const auto & [var, val] : preMap)
+				// but only leaf preconditions do
+				if (factoring->is_leaf_variable(var))
+					effMap[var] = val;
+
+
+			EffectsProxy effs = opProxy.get_effects();
+			for (size_t eff = 0; eff < effs.size(); eff++){
+				EffectProxy thisEff = effs[eff];
+				// gather the conditions of the conditional effect 
+				EffectConditionsProxy cond = thisEff.get_conditions();
+				for (size_t i = 0; i < cond.size(); i++){
+					FactProxy condition = cond[i];
+					needingActions[condition.get_pair()].insert(op);
+					//log << "Op " << task_proxy.get_operators()[op].get_name() << " needs " <<
+					//	originalTask.get_variables()[condition.get_pair().var].get_name() << " " <<
+					//	originalTask.get_variables()[condition.get_pair().var].get_fact(condition.get_pair().value).get_name() << endl;
+				}
+				effMap[thisEff.get_fact().get_variable().get_id()] = thisEff.get_fact().get_value();
+			}
+
+			// Any effect that is a leaf variable can potentially make all other leaf variables false.
+			// This is due to: the leaf state is not a single state, but a set of reachable states!
+			// An effect (or implicit effect due to a precondition!) will cause 
+
+			for (const auto & [var, effVal] : effMap){			
+				// implicit deleting effects, i.e. delete any value of the variable that is set
+				for (int val = 0; val < originalTask.get_variables()[var].get_domain_size(); val++){
+					if (val == effVal) continue;
+					// if this variable has a different value in the precondition, it does not delete
+					// but this is only true for centre variables
+					if (factoring->is_center_variable(var) && preMap.count(var) && preMap[var] != val)
+						continue;
+			
+					FactPair deletedFact(var,val);
+					deletingActions[deletedFact].insert(op);
+					//log << "Op " << task_proxy.get_operators()[op].get_name() << " deletes " <<
+					//	originalTask.get_variables()[deletedFact.var].get_name() << " " <<
+					//	originalTask.get_variables()[deletedFact.var].get_fact(deletedFact.value).get_name() << endl;
+				}
+
+				if (factoring->is_center_variable(var)) continue;
+
+				// leaf variables also delete all independent variables in the same leaf
+				int factor_id = factoring->get_factor(var);
+
+				bool foundMyself = false;
+				for (const int & leaf_var : factoring->get_leaf(factor_id)){
+					if (leaf_var == var) { foundMyself = true; continue; }
+					// if this variable has a defined value by either preconditions or effects, we don't have to generate any extra deleting effects
+					if (effMap.count(leaf_var)) continue;
+					
+					// otherwise all its values might be deleted
+					for (int val = 0; val < originalTask.get_variables()[leaf_var].get_domain_size(); val++){
+						FactPair deletedFact(leaf_var,val);
+						deletingActions[deletedFact].insert(op);
+						//log << "Op " << task_proxy.get_operators()[op].get_name() << " deletes " <<
+						//	originalTask.get_variables()[deletedFact.var].get_name() << " " <<
+						//	originalTask.get_variables()[deletedFact.var].get_fact(deletedFact.value).get_name() << endl;
+					}
+				}
+				assert(foundMyself);
+			}
 		}
 	}
-	
-	for (const auto & [_leaf, operators] : affectingLeaf)
-		decoupling_at_most_one_groups.insert(operators);
+
+
+
+	if (agressiveDecoupledExistsStep == false)
+		for (const auto & [_leaf, operators] : affectingLeaf)
+			decoupling_at_most_one_groups.insert(operators);
 
 	// prepare data structures needed for compatibility checking
 	// TODO: copied from pruning/stubborn_sets.cc maybe create common super class
@@ -656,9 +751,6 @@ void SATSearch::set_up_exists_step() {
         });
 
 
-	//for (size_t op = 0; op < task_proxy.get_operators().size(); op++)
-	//	log << op << " " << task_proxy.get_operators()[op].get_name() << endl;
-
 	// actually compute the edges of the graph
 	vector<set<int>> disabling_graph(task_proxy.get_operators().size());
 	int number_of_edges_in_disabling_graph = 0;
@@ -681,6 +773,9 @@ void SATSearch::set_up_exists_step() {
 				if (disabling_graph[deleter].count(needer)) continue; // only count inserted edges once
 
 				disabling_graph[deleter].insert(needer);
+				//log << task_proxy.get_operators()[deleter].get_name() << " dis " << task_proxy.get_operators()[needer].get_name() << endl;
+				//TaskProxy originalTask = decoupledTask->get_task_proxy_for_plan_saving();
+				//log << "\tvia " << originalTask.get_variables()[fact.var].get_name() << " " << originalTask.get_variables()[fact.var].get_fact(fact.value).get_name() << endl;
 				number_of_edges_in_disabling_graph++;
 			}
 		}
@@ -689,7 +784,6 @@ void SATSearch::set_up_exists_step() {
 	log << "Generated Disabling Graph with " << number_of_edges_in_disabling_graph << " edges." << std::endl;
 	log << "Refuted " << number_refuted_edges_in_disabling_graph << " edges." << std::endl;
 
-	
 
 	vector<vector<int>> disabling_graph_vector(task_proxy.get_operators().size());
 	for(size_t op = 0; op < task_proxy.get_operators().size(); op++){
@@ -702,7 +796,7 @@ void SATSearch::set_up_exists_step() {
 
 	vector<vector<int>> disabling_sccs = sccs::compute_maximal_sccs(disabling_graph_vector);
 	log << "Disabling Graph contains " << disabling_sccs.size() << " SCCS." << std::endl;
-
+	
 	// go backwards though the SCCs
 	for (int scc = disabling_sccs.size() - 1; scc >= 0; scc--){
 		// artificial leaf operator action
