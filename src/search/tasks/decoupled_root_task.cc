@@ -628,7 +628,6 @@ std::vector<ExplicitOperator> DecoupledRootTask::create_separate_leaf_effect_ope
         if (it == separate_leaf_effect_operators_by_effect.end()){
             separate_leaf_effect_operators_by_effect.insert({op.effects, separate_leaf_effect_operators.size() + new_leaf_operators.size()});
             separate_leaf_effect_operators_to_sharing_ops.emplace_back(1, OperatorID(operators.size()));
-            op.name += " " + to_string(separate_leaf_effect_operators.size() + new_leaf_operators.size());
 
 			new_leaf_operators.push_back(std::move(op));
         } else {
