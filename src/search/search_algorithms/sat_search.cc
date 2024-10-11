@@ -632,12 +632,12 @@ void SATSearch::set_up_exists_step() {
 		} else {
 			assert(decouplingMode);
 			assert(agressiveDecoupledExistsStep);
-			log << "Computing Aggressive Disabling in Decoupling Mode." << endl;
+			//log << "Computing Aggressive Disabling in Decoupling Mode." << endl;
 
 			std::shared_ptr<decoupling::Factoring> factoring = decoupledTask->get_factoring();
 			TaskProxy originalTask = decoupledTask->get_task_proxy_for_plan_saving();
 			int original_op_id = decoupledTask->get_original_operator_id(op);
-			log << "Op " << op << " is originally " << original_op_id << endl;
+			//log << "Op " << op << " is originally " << original_op_id << endl;
 
 
 			OperatorProxy opProxy = originalTask.get_operators()[original_op_id];
