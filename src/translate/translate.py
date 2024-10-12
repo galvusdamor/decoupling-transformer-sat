@@ -462,7 +462,8 @@ def translate_task(
         implied_facts: Dict[VarValPair, List[VarValPair]]) -> sas_tasks.SASTask:
     with timers.timing("Processing axioms", block=True):
         axioms, axiom_layer_dict = axiom_rules.handle_axioms(actions, axioms, goals,
-                                                             options.layer_strategy)
+                                                             options.layer_strategy,
+                                                             options.skip_negative_axioms)
 
     if options.dump_task:
         # Remove init facts that don't occur in strips_to_sas: they're constant.
