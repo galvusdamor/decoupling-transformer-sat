@@ -10,6 +10,7 @@
 #include "../utils/rng_options.h"
 
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iostream>
 #include <numeric>
@@ -25,7 +26,8 @@ DecoupledRootTask::DecoupledRootTask(const plugins::Options &options)
       same_leaf_preconditions_single_variable(options.get<bool>("same_leaf_preconditions_single_variable")),
       conclusive_operators(options.get<bool>("conclusive_operators")),
       conclusive_leaf_encoding(options.get<ConclusiveLeafEncoding>("conclusive_leaf_encoding")),
-      global_leaf_effects(options.get<bool>("global_leaf_effects")) {
+      global_leaf_effects(options.get<bool>("global_leaf_effects")),
+      batch_leaf_effect_operators(options.get<bool>("batch_leaf_effect_operators")) {
     TaskProxy original_task_proxy(*original_root_task);
     task_properties::verify_no_axioms(original_task_proxy);
     task_properties::verify_no_conditional_effects(original_task_proxy);
@@ -602,9 +604,9 @@ void DecoupledRootTask::set_leaf_effects_of_operator(int op_id, ExplicitOperator
     }
 }
 
-std::vector<ExplicitOperator> DecoupledRootTask::create_separate_leaf_effect_operators(int op_id) {
-    std::vector<ExplicitOperator> new_leaf_operators;
-	for (int leaf = 0; leaf < factoring->get_num_leaves(); ++leaf) {
+vector<ExplicitOperator> DecoupledRootTask::create_separate_leaf_effect_operators(int op_id) {
+    vector<ExplicitOperator> new_leaf_operators;
+    for (int leaf = 0; leaf < factoring->get_num_leaves(); ++leaf) {
         ExplicitOperator op(0, "#leaf " + to_string(leaf), false);
         if (conclusive_leaf_encoding && is_conclusive_leaf(leaf)) {
             set_conclusive_leaf_effects_of_operator(op_id, op, leaf, conclusive_leaf_encoding);
@@ -622,20 +624,53 @@ std::vector<ExplicitOperator> DecoupledRootTask::create_separate_leaf_effect_ope
             }
         }
 
-        // need to sort the effects to properly hash operator effects
-        std::sort(op.effects.begin(), op.effects.end());
-        auto it = separate_leaf_effect_operators_by_effect.find(op.effects);
-        if (it == separate_leaf_effect_operators_by_effect.end()){
-            separate_leaf_effect_operators_by_effect.insert({op.effects, separate_leaf_effect_operators.size() + new_leaf_operators.size()});
-            separate_leaf_effect_operators_to_sharing_ops.emplace_back(1, OperatorID(operators.size()));
+        if (op.effects.empty()){
+            // no effects on this leaf
+            continue;
+        }
 
-			new_leaf_operators.push_back(std::move(op));
+        // in these two cases, we only "copy" the reached leaf states, which is always the same for all
+        // leaf states and all such operators. here batching does not make sense.
+        bool fork_or_ifork_without_pre = factoring->is_fork_leaf(leaf) ||
+                (factoring->is_ifork_leaf(leaf) && factoring->has_pre_on_leaf(op_id, leaf));
+
+        // need to sort the effects for proper hashing
+        std::sort(op.effects.begin(), op.effects.end());
+        if (batch_leaf_effect_operators && !fork_or_ifork_without_pre) {
+            int batch_size = static_cast<int>(ceil(op.effects.size() / 5.0));
+            for (int start = 0; start < static_cast<int>(op.effects.size()); start += batch_size) {
+                int end = min(start + batch_size, static_cast<int>(op.effects.size()));
+                assert(op.effects.begin() + end <= op.effects.end());
+                auto effects = vector<ExplicitEffect>(op.effects.begin() + start, op.effects.begin() + end);
+
+                auto it = separate_leaf_effect_operators_by_effect.find(effects);
+                if (it == separate_leaf_effect_operators_by_effect.end()) {
+                    separate_leaf_effect_operators_by_effect.insert(
+                            {effects, separate_leaf_effect_operators.size() + new_leaf_operators.size()});
+                    separate_leaf_effect_operators_to_sharing_ops.emplace_back(1, OperatorID(operators.size()));
+
+                    ExplicitOperator new_op(0, "#leaf " + to_string(leaf), false);
+                    new_op.effects = std::move(effects);
+                    new_leaf_operators.push_back(std::move(new_op));
+                } else {
+                    size_t copy_op_id = it->second;
+                    separate_leaf_effect_operators_to_sharing_ops[copy_op_id].emplace_back(operators.size());
+                }
+            }
         } else {
-            size_t copy_op_id = it->second;
-            separate_leaf_effect_operators_to_sharing_ops[copy_op_id].emplace_back(operators.size());
+            auto it = separate_leaf_effect_operators_by_effect.find(op.effects);
+            if (it == separate_leaf_effect_operators_by_effect.end()){
+                separate_leaf_effect_operators_by_effect.insert({op.effects, separate_leaf_effect_operators.size() + new_leaf_operators.size()});
+                separate_leaf_effect_operators_to_sharing_ops.emplace_back(1, OperatorID(operators.size()));
+
+                new_leaf_operators.push_back(std::move(op));
+            } else {
+                size_t copy_op_id = it->second;
+                separate_leaf_effect_operators_to_sharing_ops[copy_op_id].emplace_back(operators.size());
+            }
         }
     }
-	return new_leaf_operators;
+    return new_leaf_operators;
 }
 
 int DecoupledRootTask::create_operator(int op_id) {
@@ -889,17 +924,45 @@ public:
         document_synopsis(
             "A decoupled transformation of the root task.");
 
-        add_option<shared_ptr<decoupling::Factoring>>("factoring", "method that computes the factoring.");
-        add_option<bool>("same_leaf_preconditions_single_variable", "The same preconditions of leaves have a single secondary variable.", "true");
-        add_option<ConclusiveLeafEncoding>("conclusive_leaf_encoding", "Conclusive leaf encoding.", "multivalued");
-        add_option<bool>("skip_unnecessary_leaf_effects", "Skip unnecessary leaf effects for operators that have no influence on the leaf.", "true");
-        add_option<bool>("conclusive_operators", "Avoid conditional effects for the effects of conclusive operators on a non-conclusive leaf.", "true");
-        add_option<bool>("global_leaf_effects", "Add leave effects to global operators. If false, we create separate seperate_leaf_effect operators (not a valid compilation and only useful for SAT-based planning).", "true");
+        add_option<shared_ptr<decoupling::Factoring>>("factoring",
+                                                      "method that computes the factoring.");
+        add_option<bool>("same_leaf_preconditions_single_variable",
+                         "The same preconditions of leaves have a "
+                         "single secondary variable.",
+                         "true");
+        add_option<ConclusiveLeafEncoding>("conclusive_leaf_encoding",
+                                           "Conclusive leaf encoding.",
+                                           "multivalued");
+        add_option<bool>("skip_unnecessary_leaf_effects",
+                         "Skip unnecessary leaf effects for operators that "
+                         "have no influence on the leaf.",
+                         "true");
+        add_option<bool>("conclusive_operators",
+                         "Avoid conditional effects for the effects of conclusive "
+                         "operators on a non-conclusive leaf.",
+                         "true");
+        add_option<bool>("global_leaf_effects",
+                         "Add leaf effects to global operators. If false, we create "
+                         "separate separate_leaf_effect operators (not a valid compilation and "
+                         "only useful for SAT-based planning).",
+                         "true");
+        add_option<bool>("batch_leaf_effect_operators",
+                         "If global_leaf_effects=false, this splits up every "
+                         "separate_leaf_effect operator into smaller ones (less effects), "
+                         "expecting that more of these operators are shared between "
+                         "several global operators.",
+                         "false");
         add_option<bool>("dump_task", "Dumps the task to the console.", "false");
         add_option<bool>("write_sas", "Writes the decoupled task to dec_output.sas.", "false");
-        add_option<bool>("normalize_variable_names", "Normalizes the variable names by numbering in the format var[x]", "false");
-        add_option<bool>("write_pddl", "Writes the decoupled task to dec_domain.pddl and dec_problem.pddl.", "false");
-        add_option<bool>("write_factoring", "Writes the factoring of the decoupled task to factoring.txt.", "false");
+        add_option<bool>("normalize_variable_names",
+                         "Normalizes the variable names by numbering in the format var[x]",
+                         "false");
+        add_option<bool>("write_pddl",
+                         "Writes the decoupled task to dec_domain.pddl and dec_problem.pddl.",
+                         "false");
+        add_option<bool>("write_factoring",
+                         "Writes the factoring of the decoupled task to factoring.txt.",
+                         "false");
     }
 
     virtual shared_ptr<DecoupledRootTask> create_component(const plugins::Options &options, const utils::Context &) const override {
