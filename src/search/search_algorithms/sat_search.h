@@ -80,8 +80,10 @@ class SATSearch : public SearchAlgorithm {
 
 	// axiom structure graph
 	std::vector<std::vector<int>> derived_implication;
+	std::vector<std::vector<int>> pos_derived_implication;
+	std::vector<std::vector<int>> neg_derived_implication;
 	std::map<FactPair, std::vector<int>> derived_entry_edges;
-	void axiom_dfs(int var, std::set<int> & allReachable);
+	void axiom_dfs(int var, std::set<int> & posReachable, std::set<int> & negReachable, bool mode);
 	// axiom SCCs
 	std::vector<AxiomSCC> axiomSCCsInTopOrder;
 	std::vector<std::vector<OperatorProxy>> achievers_per_derived;

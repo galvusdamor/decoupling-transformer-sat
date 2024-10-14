@@ -148,6 +148,10 @@ void SATSearch::initialize() {
 
 	derived_implication.clear();
 	derived_implication.resize(task_proxy.get_variables().size());
+	pos_derived_implication.clear();
+	pos_derived_implication.resize(task_proxy.get_variables().size());
+	neg_derived_implication.clear();
+	neg_derived_implication.resize(task_proxy.get_variables().size());
 	achievers_per_derived.resize(task_proxy.get_variables().size());
 	derived_entry_edges.clear();
 
@@ -190,6 +194,11 @@ void SATSearch::initialize() {
 				//assert(fact.get_value() == 1);
 				int fact_var = fact.get_variable().get_id();
 				derived_implication[fact_var].push_back(eff_var);
+
+				if (fact.get_value() == 1)
+					pos_derived_implication[fact_var].push_back(eff_var);
+				else
+					neg_derived_implication[fact_var].push_back(eff_var);
 			} else {
 				number_of_true_conditions++;
 				derived_entry_edges[fact.get_pair()].push_back(eff_var);
@@ -555,11 +564,35 @@ void SATSearch::set_up_single_step() {
 }
 
 
-void SATSearch::axiom_dfs(int var, set<int> & allReachable){
-	if (allReachable.count(var)) return;
-	allReachable.insert(var);
-	for(int & succ : derived_implication[var])
-		axiom_dfs(succ,allReachable);
+// mode = true: causing fact has become *true*
+// mode = false: causing fact has become *false*
+void SATSearch::axiom_dfs(int var, set<int> & posReachable, set<int> & negReachable, bool mode){
+	if (mode){
+		// causing fact has become true, this means the DP could turn true
+		if (posReachable.count(var)) return;
+		posReachable.insert(var);
+
+		// search for all axioms in which this var is contained positively. They could also turn true
+		for(int & succ : pos_derived_implication[var])
+			axiom_dfs(succ,posReachable, negReachable, true);
+		
+		// search for all axioms in which this var is contained negatively. They could turn false
+		for(int & succ : neg_derived_implication[var])
+			axiom_dfs(succ,posReachable, negReachable, false);
+
+	} else {
+		// causing fact has become false, this means the DP could turn false
+		if (negReachable.count(var)) return;
+		negReachable.insert(var);
+
+		// search for all axioms in which this var is contained positively. They could also turn false
+		for(int & succ : pos_derived_implication[var])
+			axiom_dfs(succ,posReachable, negReachable, false);
+		
+		// search for all axioms in which this var is contained negatively. They could turn true
+		for(int & succ : neg_derived_implication[var])
+			axiom_dfs(succ,posReachable, negReachable, true);
+	}
 }
 
 void SATSearch::set_up_exists_step() {
@@ -600,16 +633,17 @@ void SATSearch::set_up_exists_step() {
 
 				// setting a fact to true can cause a DP to become true, which in turn means we make a precondition that it has to be false false
 				for (int & start : derived_entry_edges[thisEff.get_fact().get_pair()]){
-					set<int> allReachable;
-					axiom_dfs(start,allReachable);
-					// if we make the entry point true, any of the connected axioms might become true
-					for (const int & reach : allReachable){
-						// if derived is maintained, it cannot be deleted.
-						//if (maintainedFactsByOperator[op].count(FactPair(reach,1)) &&
-						//	maintainedFactsByOperator[op].count(FactPair(reach,0))
-						//		) continue;
+					set<int> posReachable, negReachable;
+					axiom_dfs(start,posReachable, negReachable, true); // fact has become true
+					// if derived is maintained, it cannot be deleted.
+					//if (maintainedFactsByOperator[op].count(FactPair(reach,1)) &&
+					//	maintainedFactsByOperator[op].count(FactPair(reach,0))
+					//		) continue;
+					// if we make the entry point true, any of the connected axioms might become true, so we might delete any negative precondition on it
+					for (const int & reach : posReachable)
 						deletingActions[FactPair(reach,0)].insert(op);
-					}
+					for (const int & reach : negReachable)
+						deletingActions[FactPair(reach,1)].insert(op);
 				}
 
 
@@ -628,17 +662,17 @@ void SATSearch::set_up_exists_step() {
 
 					// treat operators that have an effect that can make a derived fact false as if they were deletes of that fact
 					for (int & start : derived_entry_edges[deletedFact]){
-						set<int> allReachable;
-						axiom_dfs(start,allReachable);
-
-						// if we delete the entry point, any of the connected axioms might become false
-						for (const int & reach : allReachable){
-							// if derived is maintained, it cannot be deleted.
-							//if (maintainedFactsByOperator[op].count(FactPair(reach,1)) &&
-							//	maintainedFactsByOperator[op].count(FactPair(reach,0))
-							//		) continue;
+						set<int> posReachable, negReachable;
+						axiom_dfs(start,posReachable, negReachable, false); // fact has become true
+						// if derived is maintained, it cannot be deleted.
+						//if (maintainedFactsByOperator[op].count(FactPair(reach,1)) &&
+						//	maintainedFactsByOperator[op].count(FactPair(reach,0))
+						//		) continue;
+						// if we make the entry point true, any of the connected axioms might become true, so we might delete any negative precondition on it
+						for (const int & reach : posReachable)
+							deletingActions[FactPair(reach,0)].insert(op);
+						for (const int & reach : negReachable)
 							deletingActions[FactPair(reach,1)].insert(op);
-						}
 					}
 				}
 			}
@@ -1231,7 +1265,7 @@ SearchStatus SATSearch::step() {
 						registerClauses("axioms evaluation");
 
 						for (OperatorProxy opProxy : achievers_per_derived[sccvar]){
-
+							if (sccvar == 49) log << "Op Ax for 49" << opProxy.get_id() << endl;
 							// Effect
 							EffectsProxy effs = opProxy.get_effects();
 							assert(effs.size() == 1);
@@ -1275,6 +1309,10 @@ SearchStatus SATSearch::step() {
 									conditions.insert(fact_var);
 								}
 							}
+
+
+							if (sccvar == 49) for (int c : conditions)
+								log << "Condition " << c << endl;
 							
 							
 							andImplies(solver,conditions,eff_fact_var);
@@ -1283,10 +1321,12 @@ SearchStatus SATSearch::step() {
 
 							assert(conditions.size() > 0);
 							if (conditions.size() == 1){
+								if (sccvar == 49) log << "Cause: " << *conditions.begin() << endl;
 								causeVariables[eff_var].push_back(*conditions.begin());
 							} else {
 								int intermediateCausation = capsule.new_variable();
 								variableCounter["axiom causation"]++;
+								if (sccvar == 49) log << "Cause: " << intermediateCausation << endl;
 								causeVariables[eff_var].push_back(intermediateCausation);
 								DEBUG(capsule.registerVariable(intermediateCausation,"ca " + pad_int(opProxy.get_id()) + " @ " + pad_int(time) + " " + pad_int(layer)));
 								for (int required : conditions)
@@ -1616,7 +1656,7 @@ SearchStatus SATSearch::step() {
 			axiom_evaluator.evaluate(upack);
 			s = State(*task,move(upack));
 			s.unpack();
-			task_properties::dump_fdr(s);
+			//task_properties::dump_fdr(s);
 
 			if (!existsStep || planPositionsToSATStates.count(i)){
 				for (size_t j = 0; j < s.size(); ++j){
