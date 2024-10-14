@@ -598,6 +598,22 @@ void SATSearch::set_up_exists_step() {
 					conditions.push_back(condition.get_pair());
 				}
 
+				// setting a fact to true can cause a DP to become true, which in turn means we make a precondition that it has to be false false
+				for (int & start : derived_entry_edges[thisEff.get_fact().get_pair()]){
+					set<int> allReachable;
+					axiom_dfs(start,allReachable);
+					// if we make the entry point true, any of the connected axioms might become true
+					for (const int & reach : allReachable){
+						// if derived is maintained, it cannot be deleted.
+						//if (maintainedFactsByOperator[op].count(FactPair(reach,1)) &&
+						//	maintainedFactsByOperator[op].count(FactPair(reach,0))
+						//		) continue;
+						deletingActions[FactPair(reach,0)].insert(op);
+					}
+				}
+
+
+
 				// implicit deleting effects, i.e. delete any value of the variable that is set
 				for (int val = 0; val < thisEff.get_fact().get_variable().get_domain_size(); val++){
 					if (val == thisEff.get_fact().get_value()) continue;
@@ -1535,7 +1551,7 @@ SearchStatus SATSearch::step() {
 	int solverState = ipasir_solve(solver);
 	log << "SAT solver state: " << solverState << endl;
 	if (solverState == 10){
-		printVariableTruth(solver,capsule);
+		//printVariableTruth(solver,capsule);
 
 		// maps operator to their index in the global ordering
 		std::vector<int> global_action_indexing(task_proxy.get_operators().size());
@@ -1604,8 +1620,8 @@ SearchStatus SATSearch::step() {
 
 			if (!existsStep || planPositionsToSATStates.count(i)){
 				for (size_t j = 0; j < s.size(); ++j){
-					log << "State " << j << " " << s[j].get_value() << " " << get_fact_var(planPositionsToSATStates[i],s[j]) << " sat: " << 
-						ipasir_val(solver,get_fact_var(planPositionsToSATStates[i],s[j])) << endl;
+					//log << "State " << j << " " << s[j].get_value() << " " << get_fact_var(planPositionsToSATStates[i],s[j]) << " sat: " << 
+					//	ipasir_val(solver,get_fact_var(planPositionsToSATStates[i],s[j])) << endl;
 					assert(ipasir_val(solver,get_fact_var(planPositionsToSATStates[i],s[j])) > 0);
 				}
 			}
