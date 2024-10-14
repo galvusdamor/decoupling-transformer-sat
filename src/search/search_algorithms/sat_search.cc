@@ -963,7 +963,7 @@ SearchStatus SATSearch::step() {
 		if (scc.sizeOne) scc.numberOfAxiomLayers = 1;
 
 		// nasty case. We can't optimise here
-		if (scc.sizeOne || scc.fullComputationRequired){
+		if (scc.fullComputationRequired){
 			for (int v : scc.variables){
 				numberOfAxiomLayerVariablesPerDerived[v] = scc.numberOfAxiomLayers;
 			}
@@ -1203,9 +1203,17 @@ SearchStatus SATSearch::step() {
 					vector<vector<int>> causeVariables (task_proxy.get_variables().size());
 					for (int sccvar : scc.variables){
 						if (statically_true_derived_predicates.count(sccvar)) {
-							assertYes(solver,axiom_variables[time][sccvar][layer]);
+							assertYes(solver,axiom_variables[time][sccvar][layer+1]);
 							continue;
 						}
+
+						// positive maintenance, if DP was true, it must remain true.
+						int scc_var_fact = axiom_variables[time][sccvar][layer+1]; 
+						int scc_var_fact_cur = axiom_variables[time][sccvar][layer]; 
+						implies(solver,scc_var_fact_cur,scc_var_fact);
+						causeVariables[sccvar].push_back(scc_var_fact_cur);
+						registerClauses("axioms evaluation");
+
 						for (OperatorProxy opProxy : achievers_per_derived[sccvar]){
 
 							// Effect
@@ -1215,7 +1223,9 @@ SearchStatus SATSearch::step() {
 							assert(thisEff.get_fact().get_value() == 1);
 							assert(thisEff.get_fact().get_variable().is_derived());
 							int eff_var = thisEff.get_fact().get_variable().get_id();
+							assert(eff_var == sccvar);
 							int eff_fact_var = get_axiom_var(time,layer+1,thisEff.get_fact());
+							assert(eff_fact_var == scc_var_fact);
 
 							set<int> conditions;
 							// Preconditions
@@ -1269,6 +1279,7 @@ SearchStatus SATSearch::step() {
 							}
 						}
 					}
+					
 
 					for (int var : scc.variables){
 						assert(task_proxy.get_variables()[var].is_derived());
@@ -1454,7 +1465,6 @@ SearchStatus SATSearch::step() {
 		if (goals[i].get_variable().is_derived()){
 			DEBUG(log << "Derived GOAL " << goals[i].get_variable().get_id() << " " << goals[i].get_value() << " " << get_last_axiom_var(currentLength,goals[i]) << endl);
 			assertYes(solver,get_last_axiom_var(currentLength,goals[i]));
-		
 		} else {
 			DEBUG(log << "Regular GOAL " << goals[i].get_variable().get_id() << " " << goals[i].get_value() << " " << get_fact_var(currentLength,goals[i]) << endl);
 			assertYes(solver,get_fact_var(currentLength,goals[i]));
@@ -1525,7 +1535,7 @@ SearchStatus SATSearch::step() {
 	int solverState = ipasir_solve(solver);
 	log << "SAT solver state: " << solverState << endl;
 	if (solverState == 10){
-		//printVariableTruth(solver,capsule);
+		printVariableTruth(solver,capsule);
 
 		// maps operator to their index in the global ordering
 		std::vector<int> global_action_indexing(task_proxy.get_operators().size());
@@ -1555,7 +1565,7 @@ SearchStatus SATSearch::step() {
 				plan.push_back(OperatorID(op));
 			}
 
-			planPositionsToSATStates[plan.size()] = time;
+			planPositionsToSATStates[plan.size()] = time + 1;
 		}
     
 		//for(int time = 0; time <= currentLength; time++){
@@ -1581,20 +1591,22 @@ SearchStatus SATSearch::step() {
 	        visited_states.push_back(cur);
 	    }
 
-		//AxiomEvaluator &axiom_evaluator = g_axiom_evaluators[task_proxy];
+		AxiomEvaluator &axiom_evaluator = g_axiom_evaluators[task_proxy];
 		for (size_t i = 0; i < visited_states.size(); ++i){
 			State & s = visited_states[i];
 			// TODO it seems that the state registry evaluates axioms for us
-    		//s.unpack();
-			//vector<int> upack = s.get_unpacked_values();
-			//axiom_evaluator.evaluate(upack);
-			//s = State(*task,move(upack));
+    		s.unpack();
+			vector<int> upack = s.get_unpacked_values();
+			axiom_evaluator.evaluate(upack);
+			s = State(*task,move(upack));
 			s.unpack();
-			//task_properties::dump_fdr(s);
+			task_properties::dump_fdr(s);
 
 			if (!existsStep || planPositionsToSATStates.count(i)){
 				for (size_t j = 0; j < s.size(); ++j){
-					assert(ipasir_val(solver,get_fact_var(planPositionsToSATStates[i],s[j])));
+					log << "State " << j << " " << s[j].get_value() << " " << get_fact_var(planPositionsToSATStates[i],s[j]) << " sat: " << 
+						ipasir_val(solver,get_fact_var(planPositionsToSATStates[i],s[j])) << endl;
+					assert(ipasir_val(solver,get_fact_var(planPositionsToSATStates[i],s[j])) > 0);
 				}
 			}
 		}
