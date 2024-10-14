@@ -16,6 +16,7 @@ class SatAxiomTask : public DelegatingTask {
     std::unordered_set<int> affected_variables;
     std::vector<int> new_initial_state;
 
+    bool validiate() const;
     FactPair get_adjusted_fact(const FactPair &fact) const;
 public:
     SatAxiomTask(

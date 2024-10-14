@@ -33,6 +33,26 @@ SatAxiomTask::SatAxiomTask(
     TaskProxy task_proxy(*this);
     AxiomEvaluator &axiom_evaluator = g_axiom_evaluators[task_proxy];
     axiom_evaluator.evaluate(new_initial_state);
+
+    assert(validiate());
+}
+
+bool SatAxiomTask::validiate() const {
+    TaskProxy task_proxy(*this);
+    for (const auto &op : task_proxy.get_axioms()) {
+        if (!op.is_axiom()) {
+            continue;
+        }
+        assert(op.get_effects().size() == 1);
+        const EffectProxy &eff = op.get_effects()[0];
+        if (!eff.get_fact().get_variable().is_derived()) {
+            return false;
+        }
+        if (eff.get_fact().get_value() != 1) {
+            return false;
+        }
+    }
+    return true;
 }
 
 FactPair SatAxiomTask::get_adjusted_fact(const FactPair &fact) const {
@@ -67,8 +87,8 @@ FactPair SatAxiomTask::get_operator_effect_condition(int op_index, int eff_index
 }
 
 FactPair SatAxiomTask::get_operator_effect(int op_index, int eff_index, bool is_axiom) const {
-     FactPair fact = parent->get_operator_effect(op_index, eff_index, is_axiom);
-     return get_adjusted_fact(fact);
+    FactPair fact = parent->get_operator_effect(op_index, eff_index, is_axiom);
+    return get_adjusted_fact(fact);
 }
 
 FactPair SatAxiomTask::get_goal_fact(int index) const {
