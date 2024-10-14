@@ -177,6 +177,7 @@ void SATSearch::initialize() {
 		for (size_t i = 0; i < cond.size(); i++)
 			conds.push_back(cond[i]);
 
+		int number_of_true_conditions = 0;
 		for (FactProxy & fact : conds){
 			if (fact.get_variable().is_derived()){
 				// the variables that is changed will require value 0
@@ -185,12 +186,19 @@ void SATSearch::initialize() {
 					continue;	
 				}
 
-				assert(fact.get_value() == 1);
+				number_of_true_conditions++;
+				//assert(fact.get_value() == 1);
 				int fact_var = fact.get_variable().get_id();
 				derived_implication[fact_var].push_back(eff_var);
 			} else {
+				number_of_true_conditions++;
 				derived_entry_edges[fact.get_pair()].push_back(eff_var);
 			}
+		}
+
+		if (number_of_true_conditions == 0){
+			log << "Found statically true derived predicate: " << task_proxy.get_variables()[eff_var].get_name() << endl; 
+			statically_true_derived_predicates.insert(eff_var);
 		}
 	}
 	vector<vector<int>> initial_derived_sccs = sccs::compute_maximal_sccs(derived_implication);
@@ -909,8 +917,10 @@ int SATSearch::get_axiom_var(int time, int layer, FactProxy fact){
 }
 
 int SATSearch::get_last_axiom_var(int time, FactProxy fact){
-	assert(fact.get_value() == 1);
-	return axiom_variables[time][fact.get_variable().get_id()].back();
+	if (fact.get_value() == 1)
+		return axiom_variables[time][fact.get_variable().get_id()].back();
+	else
+		return -axiom_variables[time][fact.get_variable().get_id()].back();
 }
 
 
@@ -1179,15 +1189,23 @@ SearchStatus SATSearch::step() {
 			// nasty case. We can't optimise here
 			if (scc.sizeOne || scc.fullComputationRequired){
 				// initially all axioms are false
-				for (int var : scc.variables)
+				for (int var : scc.variables){
 					if (task_proxy.get_variables()[var].is_derived()){
-						assertNot(solver,axiom_variables[time][var][0]);
+						if (statically_true_derived_predicates.count(var))
+							assertYes(solver,axiom_variables[time][var][0]);
+						else
+							assertNot(solver,axiom_variables[time][var][0]);
 					}
+				}
 				registerClauses("axioms initialisation");
 
 				for (int layer = 0; layer < scc.numberOfAxiomLayers; layer++){
 					vector<vector<int>> causeVariables (task_proxy.get_variables().size());
 					for (int sccvar : scc.variables){
+						if (statically_true_derived_predicates.count(sccvar)) {
+							assertYes(solver,axiom_variables[time][sccvar][layer]);
+							continue;
+						}
 						for (OperatorProxy opProxy : achievers_per_derived[sccvar]){
 
 							// Effect
@@ -1219,7 +1237,7 @@ SearchStatus SATSearch::step() {
 										continue;	
 									}
 
-									assert(fact.get_value() == 1);
+									//assert(fact.get_value() == 1);
 									int fact_var;
 									if (sset.count(fact.get_variable().get_id()))
 										fact_var = get_axiom_var(time,layer,fact);
@@ -1255,6 +1273,7 @@ SearchStatus SATSearch::step() {
 					for (int var : scc.variables){
 						assert(task_proxy.get_variables()[var].is_derived());
 						assert(axiom_variables[time][var].size() > size_t(layer)+1);
+						if (statically_true_derived_predicates.count(var)) continue;
 						int eff_var = axiom_variables[time][var][layer+1];
 						impliesOr(solver,eff_var,causeVariables[var]);
 						assert(causeVariables[var].size());
@@ -1267,6 +1286,10 @@ SearchStatus SATSearch::step() {
 				
 				vector<vector<int>> causeVariablesLayer0 (task_proxy.get_variables().size());
 				for (int sccvar : scc.variables){
+					if (statically_true_derived_predicates.count(sccvar)) {
+						assertYes(solver,axiom_variables[time][sccvar][0]);
+						continue;
+					}
 					for (OperatorProxy opProxy : achievers_per_derived[sccvar]){
 
 						// Effect
@@ -1336,11 +1359,13 @@ SearchStatus SATSearch::step() {
 					}
 				}
 
-				for (int var : scc.variables)
+				for (int var : scc.variables){
+					if (statically_true_derived_predicates.count(var)) continue;
 					if (task_proxy.get_variables()[var].is_derived()){
 						int eff_var = axiom_variables[time][var][0];
 						impliesOr(solver,eff_var,causeVariablesLayer0[var]);
 					}
+				}
 				registerClauses("axioms causation");
 
 
@@ -1348,6 +1373,10 @@ SearchStatus SATSearch::step() {
 				if (scc.isOfImplicationType) {
 					for (size_t varOffset = 0; varOffset < scc.variables.size(); varOffset++){
 						int var = scc.variables[varOffset];
+						if (statically_true_derived_predicates.count(var)) {
+							assertYes(solver,axiom_variables[time][var][1]);
+							continue;
+						}
 						for (size_t varOffsetTo : scc.directTransitiveImplications[varOffset]){
 							int varTo = scc.variables[varOffsetTo];
 							implies(solver,axiom_variables[time][var][0], axiom_variables[time][varTo][1]);
@@ -1357,6 +1386,7 @@ SearchStatus SATSearch::step() {
 
 					for (size_t varOffsetTo = 0; varOffsetTo < scc.variables.size(); varOffsetTo++){
 						int varTo = scc.variables[varOffsetTo];
+						if (statically_true_derived_predicates.count(varTo)) continue;
 						vector<int> causeVariables;
 						for (size_t varOffset : scc.directTransitiveCauses[varOffsetTo]){
 							int var = scc.variables[varOffset];
@@ -1373,6 +1403,10 @@ SearchStatus SATSearch::step() {
 					for (int value = 0; value < varProxy.get_domain_size(); value++){
 						for (size_t varOffset = 0; varOffset < scc.variables.size(); varOffset++){
 							int var = scc.variables[varOffset];
+							if (statically_true_derived_predicates.count(var)) {
+								assertYes(solver,axiom_variables[time][var][1]);
+								continue;
+							}
 							for (size_t varOffsetTo : scc.guardedTransitiveImplications[value][varOffset]){
 								int varTo = scc.variables[varOffsetTo];
 								// if initial value and dependent one -> final value
@@ -1385,6 +1419,7 @@ SearchStatus SATSearch::step() {
 
 						for (size_t varOffsetTo = 0; varOffsetTo < scc.variables.size(); varOffsetTo++){
 							int varTo = scc.variables[varOffsetTo];
+							if (statically_true_derived_predicates.count(varTo)) continue;
 							vector<int> causeVariables;
 							for (size_t varOffset : scc.guardedTransitiveCauses[value][varOffsetTo]){
 								int var = scc.variables[varOffset];

@@ -66,7 +66,9 @@ class SATSearch : public SearchAlgorithm {
 	std::vector<std::vector<int>> operator_variables;
 	std::vector<std::vector<int>> real_operator_variables;
 	int get_fact_var(int time, FactProxy fact);
-	
+
+	std::unordered_set<int> statically_true_derived_predicates;
+
 	// index: timestep -> variable
 	std::vector<std::vector<std::vector<int>>> axiom_variables;
 	int get_axiom_var(int time, int layer, FactProxy fact);
