@@ -34,6 +34,7 @@ class DecoupledRootTask : public RootTask {
     mutable std::unordered_map<int, std::unordered_set<int>> original_operator_tr_eff_vars;
 
     bool global_leaf_effects;
+    bool batch_leaf_effect_operators;
 
     std::unordered_map<int, int> center_var_to_pvar;
     std::unordered_map<int, int> conclusive_leaf_var_to_pvar;
