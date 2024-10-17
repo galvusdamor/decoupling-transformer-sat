@@ -161,8 +161,61 @@ void SATSearch::initialize() {
 	achievers_per_derived.resize(task_proxy.get_variables().size());
 	derived_entry_edges.clear();
 
-	// building the derived predicate dependency graph
+	// find statically true DPs
 	AxiomsProxy axioms = task_proxy.get_axioms();
+	bool newTrueFound = true;
+	while (newTrueFound){
+		newTrueFound = false;
+		for (size_t ax = 0; ax < axioms.size(); ax++){
+			OperatorProxy opProxy = axioms[ax];
+
+			// Effect
+			EffectsProxy effs = opProxy.get_effects();
+			assert(effs.size() == 1);
+			EffectProxy thisEff = effs[0];
+			assert(thisEff.get_fact().get_variable().is_derived());
+			int eff_var = thisEff.get_fact().get_variable().get_id();
+			if (statically_true_derived_predicates.count(eff_var)) continue;
+			assert(thisEff.get_fact().get_value() == 1);
+			
+			// Preconditions
+			PreconditionsProxy precs = opProxy.get_preconditions();
+			vector<FactProxy> conds;
+		
+			for (size_t pre = 0; pre < precs.size(); pre++)
+				conds.push_back(precs[pre]);
+			
+			EffectConditionsProxy cond = thisEff.get_conditions();
+			for (size_t i = 0; i < cond.size(); i++)
+				conds.push_back(cond[i]);
+
+			int number_of_true_conditions = 0;
+			bool inApplicable = false;
+			for (FactProxy & fact : conds){
+				if (fact.get_variable().is_derived() && fact.get_variable().get_id() == eff_var){
+					assert(fact.get_value() == 0);
+					continue;	
+				}
+				if (statically_true_derived_predicates.count(fact.get_variable().get_id())){
+					if (fact.get_value()) continue;	// condition is always true
+					inApplicable = true;
+					break;
+				}
+				
+				number_of_true_conditions++;
+			}
+			if (inApplicable) continue;
+
+			if (number_of_true_conditions == 0){
+				DEBUG(log << "Found statically true derived predicate: " << task_proxy.get_variables()[eff_var].get_name() << endl);
+				statically_true_derived_predicates.insert(eff_var);
+				newTrueFound = true;
+			}
+		}
+	}
+	log << "Found statically true derived predicates: " << statically_true_derived_predicates.size() << endl;
+
+	// building the derived predicate dependency graph
 	for (size_t ax = 0; ax < axioms.size(); ax++){
 		OperatorProxy opProxy = axioms[ax];
 
@@ -176,6 +229,9 @@ void SATSearch::initialize() {
 		assert(thisEff.get_fact().get_value() == 1);
 		achievers_per_derived[eff_var].push_back(opProxy);
 
+		// statically true DP, it does not depend on anything even if there are axioms.
+		if (statically_true_derived_predicates.count(eff_var)) continue;
+
 		// Preconditions
 		PreconditionsProxy precs = opProxy.get_preconditions();
 		vector<FactProxy> conds;
@@ -187,7 +243,6 @@ void SATSearch::initialize() {
 		for (size_t i = 0; i < cond.size(); i++)
 			conds.push_back(cond[i]);
 
-		int number_of_true_conditions = 0;
 		for (FactProxy & fact : conds){
 			if (fact.get_variable().is_derived()){
 				// the variables that is changed will require value 0
@@ -196,7 +251,6 @@ void SATSearch::initialize() {
 					continue;	
 				}
 
-				number_of_true_conditions++;
 				//assert(fact.get_value() == 1);
 				int fact_var = fact.get_variable().get_id();
 				derived_implication[fact_var].push_back(eff_var);
@@ -206,16 +260,12 @@ void SATSearch::initialize() {
 				else
 					neg_derived_implication[fact_var].push_back(eff_var);
 			} else {
-				number_of_true_conditions++;
 				derived_entry_edges[fact.get_pair()].push_back(eff_var);
 			}
 		}
-
-		if (number_of_true_conditions == 0){
-			DEBUG(log << "Found statically true derived predicate: " << task_proxy.get_variables()[eff_var].get_name() << endl);
-			statically_true_derived_predicates.insert(eff_var);
-		}
 	}
+
+
 	vector<vector<int>> initial_derived_sccs = sccs::compute_maximal_sccs(derived_implication);
 	vector<vector<int>> derived_sccs;
 	for (vector<int> s : initial_derived_sccs){
@@ -223,7 +273,7 @@ void SATSearch::initialize() {
 		derived_sccs.push_back(s);
 		//log << "SCC of size " << s.size() << endl;
 	}
-	log << "Number of SCCs " << derived_sccs.size() << endl;
+	log << "Number of SCCs " << derived_sccs.size() - statically_true_derived_predicates.size() << endl;
 
 
 	int sizeOneSCCs = 0;
@@ -237,6 +287,7 @@ void SATSearch::initialize() {
 		AxiomSCC thisSCC;
 		thisSCC.variables = s;
 		if (s.size() == 1){
+			// this will include statically true DPs.
 			sizeOneSCCs++;
 			thisSCC.sizeOne = true;
 			axiomSCCsInTopOrder.push_back(thisSCC);
@@ -798,8 +849,6 @@ void SATSearch::set_up_exists_step() {
                 task_properties::get_fact_pairs(op.get_preconditions()));
         });
 
-
-
     sorted_op_effects = utils::map_vector<vector<FactPair>>(
         task_proxy.get_operators(), [](const OperatorProxy &op) {
 			EffectsProxy effProx = op.get_effects();
@@ -964,15 +1013,18 @@ void SATSearch::print_statistics() const {
 }
 
 int SATSearch::get_fact_var(int time, FactProxy fact){
+	assert(statically_true_derived_predicates.count(fact.get_variable().get_id()) == 0);
 	return fact_variables[time][fact.get_variable().get_id()][fact.get_value()];
 }
 
 int SATSearch::get_axiom_var(int time, int layer, FactProxy fact){
+	assert(statically_true_derived_predicates.count(fact.get_variable().get_id()) == 0);
 	assert(fact.get_value() == 1);
 	return axiom_variables[time][fact.get_variable().get_id()][layer];
 }
 
 int SATSearch::get_last_axiom_var(int time, FactProxy fact){
+	assert(statically_true_derived_predicates.count(fact.get_variable().get_id()) == 0);
 	if (fact.get_value() == 1)
 		return axiom_variables[time][fact.get_variable().get_id()].back();
 	else
@@ -1056,11 +1108,13 @@ SearchStatus SATSearch::step() {
 			DEBUG(capsule.registerVariable(opvar,"op " + pad_int(op) + " @ " + pad_int(time) + " " + task_proxy.get_operators()[op].get_name()));
 		}
 	}
-	DEBUG(log << "Operator Variables Generated" << capsule.number_of_variables<< endl);
+	DEBUG(log << "Operator Variables Generated " << capsule.number_of_variables<< endl);
 
 	for (int time = 0; time <= currentLength; time++){
 		fact_variables[time].resize(task_proxy.get_variables().size());
 		for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+			// don't need to generate anything for statically true facts.
+			if (statically_true_derived_predicates.count(var)) continue;
 			VariableProxy varProxy = task_proxy.get_variables()[var];
 			for (int val = 0; val < varProxy.get_domain_size(); val++){
 				int factVar = capsule.new_variable();
@@ -1070,13 +1124,15 @@ SearchStatus SATSearch::step() {
 			}
 		}
 	}
-	DEBUG(log << "State Variables Generated" << capsule.number_of_variables<< endl);
+	DEBUG(log << "State Variables Generated " << capsule.number_of_variables<< endl);
 
 	for (int time = 0; time <= currentLength; time++){
 		axiom_variables[time].resize(task_proxy.get_variables().size());
 		for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
 			VariableProxy varProxy = task_proxy.get_variables()[var];
 			if (!varProxy.is_derived()) continue;
+			// don't need to generate anything for statically true facts.
+			if (statically_true_derived_predicates.count(var)) continue;
 
 			axiom_variables[time][var].resize(numberOfAxiomLayerVariablesPerDerived[var] + 1);
 			for (int layer = 0; layer <= numberOfAxiomLayerVariablesPerDerived[var]; layer++){
@@ -1123,17 +1179,31 @@ SearchStatus SATSearch::step() {
 			OperatorProxy opProxy = task_proxy.get_operators()[op];
 
 			map<int,int> preMap;
+			bool inapplicableOperator = false;
 
 			// Preconditions
 			PreconditionsProxy precs = opProxy.get_preconditions();
 			for (size_t pre = 0; pre < precs.size(); pre++){
 				FactProxy fact = precs[pre];
 				int fact_var = get_fact_var(time,fact);
+				
+				if (statically_true_derived_predicates.count(fact.get_variable().get_id())){
+					// this precondition is always true, ignore it.
+					if (fact.get_value()) continue;
+					// precondition is always false, to disable action
+					assertNot(solver,opvar);
+					DEBUG(log << "Disabling operator " << opProxy.get_name() << endl);
+					inapplicableOperator = true;
+					break;
+				}
+
 				preMap[fact.get_variable().get_id()] = fact.get_value();
 				
 				implies(solver,opvar,fact_var);
 			}
 			registerClauses("preconditions");
+			
+			if (inapplicableOperator) continue;
 
 			// Effect
 			EffectsProxy effs = opProxy.get_effects();
@@ -1243,7 +1313,7 @@ SearchStatus SATSearch::step() {
 
 		// final value of the axioms implies their value for the next layer
 		for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
-			if (task_proxy.get_variables()[var].is_derived()){
+			if (task_proxy.get_variables()[var].is_derived() && statically_true_derived_predicates.count(var) == 0){
 				// if axiom evaluates to true, its value 1 is the correct one
 				implies(solver,axiom_variables[time][var].back(),fact_variables[time][var][1]);
 				// if axiom evaluates to false, its value 0 is the correct one
@@ -1257,12 +1327,17 @@ SearchStatus SATSearch::step() {
 
 		int sccCount = 0;
 		for (AxiomSCC & scc : axiomSCCsInTopOrder){
-			DEBUG(if (sccCount && sccCount % 100 == 0){
+			DEBUG(if (sccCount && sccCount % 1000 == 0){
 				log << "Generated Axiom SCC " << sccCount << " of " << axiomSCCsInTopOrder.size() << endl;
 			});
 			sccCount++;
 			set<int> sset(scc.variables.begin(), scc.variables.end());
-			if (scc.sizeOne) scc.numberOfAxiomLayers = 1;
+			if (scc.sizeOne) {
+				scc.numberOfAxiomLayers = 1;
+				if (statically_true_derived_predicates.count(scc.variables[0])){
+					continue; // don't need to generate anything for this variable
+				}
+			}
 
 			// nasty case. We can't optimise here
 			if (scc.sizeOne || scc.fullComputationRequired){
@@ -1280,10 +1355,10 @@ SearchStatus SATSearch::step() {
 				for (int layer = 0; layer < scc.numberOfAxiomLayers; layer++){
 					vector<vector<int>> causeVariables (task_proxy.get_variables().size());
 					for (int sccvar : scc.variables){
-						if (statically_true_derived_predicates.count(sccvar)) {
-							assertYes(solver,axiom_variables[time][sccvar][layer+1]);
-							continue;
-						}
+						//if (statically_true_derived_predicates.count(sccvar)) {
+						//	assertYes(solver,axiom_variables[time][sccvar][layer+1]);
+						//	continue;
+						//}
 
 						// positive maintenance, if DP was true, it must remain true.
 						int scc_var_fact = axiom_variables[time][sccvar][layer+1]; 
@@ -1301,6 +1376,7 @@ SearchStatus SATSearch::step() {
 							assert(thisEff.get_fact().get_variable().is_derived());
 							int eff_var = thisEff.get_fact().get_variable().get_id();
 							assert(eff_var == sccvar);
+							assert(statically_true_derived_predicates.count(eff_var) == 0);
 							int eff_fact_var = get_axiom_var(time,layer+1,thisEff.get_fact());
 							assert(eff_fact_var == scc_var_fact);
 
@@ -1316,12 +1392,19 @@ SearchStatus SATSearch::step() {
 							for (size_t i = 0; i < cond.size(); i++)
 								conds.push_back(cond[i]);
 
+							bool inApplicable = false;
 							for (FactProxy & fact : conds){
 								if (fact.get_variable().is_derived()){
 									// the variables that is changed will require value 0
 									if (fact.get_variable().get_id() == eff_var){
 										assert(fact.get_value() == 0);
 										continue;	
+									}
+
+									if (statically_true_derived_predicates.count(fact.get_variable().get_id())){
+										if (fact.get_value()) continue;	// condition is always true
+										inApplicable = true;
+										break;
 									}
 
 									//assert(fact.get_value() == 1);
@@ -1337,12 +1420,10 @@ SearchStatus SATSearch::step() {
 								}
 							}
 
-
-							
+							if (inApplicable) continue;
 							
 							andImplies(solver,conditions,eff_fact_var);
 							registerClauses("axioms evaluation");
-
 
 							assert(conditions.size() > 0);
 							if (conditions.size() == 1){
@@ -1376,10 +1457,11 @@ SearchStatus SATSearch::step() {
 				
 				vector<vector<int>> causeVariablesLayer0 (task_proxy.get_variables().size());
 				for (int sccvar : scc.variables){
-					if (statically_true_derived_predicates.count(sccvar)) {
-						assertYes(solver,axiom_variables[time][sccvar][0]);
-						continue;
-					}
+					assert(statically_true_derived_predicates.count(sccvar) == 0);
+					//if (statically_true_derived_predicates.count(sccvar)) {
+					//	assertYes(solver,axiom_variables[time][sccvar][0]);
+					//	continue;
+					//}
 					for (OperatorProxy opProxy : achievers_per_derived[sccvar]){
 
 						// Effect
@@ -1389,6 +1471,7 @@ SearchStatus SATSearch::step() {
 						assert(thisEff.get_fact().get_value() == 1);
 						assert(thisEff.get_fact().get_variable().is_derived());
 						int eff_var = thisEff.get_fact().get_variable().get_id();
+						assert(statically_true_derived_predicates.count(eff_var) == 0);
 						int eff_fact_var = get_axiom_var(time,0,thisEff.get_fact());
 
 						set<int> conditions;
@@ -1405,6 +1488,7 @@ SearchStatus SATSearch::step() {
 
 						// check whether the axiom is internal to the SCC
 						bool internalAxiom = false;
+						bool inApplicable = false;
 						for (FactProxy & fact : conds){
 							if (fact.get_variable().is_derived()){
 								// the variables that is changed will require value 0
@@ -1412,10 +1496,16 @@ SearchStatus SATSearch::step() {
 									assert(fact.get_value() == 0);
 									continue;	
 								}
+								
+								if (statically_true_derived_predicates.count(fact.get_variable().get_id())){
+									if (fact.get_value()) continue;	// condition is always true
+									inApplicable = true;
+									break;
+								}
 
-								assert(fact.get_value() == 1);
 								int fact_var;
 								if (sset.count(fact.get_variable().get_id())){
+									assert(fact.get_value() == 1);
 									internalAxiom = true;
 									break;
 								}
@@ -1430,6 +1520,7 @@ SearchStatus SATSearch::step() {
 
 						// internal axioms cannot make facts at layer 0 true.
 						if (internalAxiom) continue;
+						if (inApplicable) continue;
 						
 						andImplies(solver,conditions,eff_fact_var);
 						registerClauses("axioms evaluation");
@@ -1463,10 +1554,10 @@ SearchStatus SATSearch::step() {
 				if (scc.isOfImplicationType) {
 					for (size_t varOffset = 0; varOffset < scc.variables.size(); varOffset++){
 						int var = scc.variables[varOffset];
-						if (statically_true_derived_predicates.count(var)) {
-							assertYes(solver,axiom_variables[time][var][1]);
-							continue;
-						}
+						//if (statically_true_derived_predicates.count(var)) {
+						//	assertYes(solver,axiom_variables[time][var][1]);
+						//	continue;
+						//}
 						for (size_t varOffsetTo : scc.directTransitiveImplications[varOffset]){
 							int varTo = scc.variables[varOffsetTo];
 							implies(solver,axiom_variables[time][var][0], axiom_variables[time][varTo][1]);
@@ -1493,10 +1584,10 @@ SearchStatus SATSearch::step() {
 					for (int value = 0; value < varProxy.get_domain_size(); value++){
 						for (size_t varOffset = 0; varOffset < scc.variables.size(); varOffset++){
 							int var = scc.variables[varOffset];
-							if (statically_true_derived_predicates.count(var)) {
-								assertYes(solver,axiom_variables[time][var][1]);
-								continue;
-							}
+							//if (statically_true_derived_predicates.count(var)) {
+							//	assertYes(solver,axiom_variables[time][var][1]);
+							//	continue;
+							//}
 							for (size_t varOffsetTo : scc.guardedTransitiveImplications[value][varOffset]){
 								int varTo = scc.variables[varOffsetTo];
 								// if initial value and dependent one -> final value
@@ -1536,12 +1627,19 @@ SearchStatus SATSearch::step() {
 	init.unpack();
 	for (size_t i = 0; i < init.size(); i++){
 		//if (init[i].get_variable().is_derived()) continue;
+		if (statically_true_derived_predicates.count(init[i].get_variable().get_id())) continue;
 		assertYes(solver,get_fact_var(0,init[i]));
 	}
 	registerClauses("init");
 
 	GoalsProxy goals = task_proxy.get_goals();
 	for (size_t i = 0; i < goals.size(); i++){
+		if (statically_true_derived_predicates.count(goals[i].get_variable().get_id()) == 1){
+			assert(goals[i].get_value() == 1);
+			// statically true goals do not have to be satisfied.
+			continue;
+		}
+
 		if (goals[i].get_variable().is_derived()){
 			DEBUG(log << "Derived GOAL " << goals[i].get_variable().get_id() << " " << goals[i].get_value() << " " << get_last_axiom_var(currentLength,goals[i]) << endl);
 			assertYes(solver,get_last_axiom_var(currentLength,goals[i]));
@@ -1555,6 +1653,7 @@ SearchStatus SATSearch::step() {
 	// 6. State Mutexes
 	for (int time = 0; time <= currentLength; time++){
 		for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
+			if (statically_true_derived_predicates.count(var)) continue;
 			atMostOne(solver,capsule,fact_variables[time][var]);
 			atLeastOne(solver,capsule,fact_variables[time][var]);
 		}
@@ -1598,8 +1697,9 @@ SearchStatus SATSearch::step() {
 		}
 	}
 
+	//assertYes(solver, 137);
 
-	//DEBUG(capsule.printVariables());
+	DEBUG(capsule.printVariables());
 
 
 	// print variable and clause statistics
@@ -1685,6 +1785,7 @@ SearchStatus SATSearch::step() {
 
 			if (!existsStep || planPositionsToSATStates.count(i)){
 				for (size_t j = 0; j < s.size(); ++j){
+					if (statically_true_derived_predicates.count(s[j].get_variable().get_id())) continue;
 					//log << "State " << j << " " << s[j].get_value() << " " << get_fact_var(planPositionsToSATStates[i],s[j]) << " sat: " << 
 					//	ipasir_val(solver,get_fact_var(planPositionsToSATStates[i],s[j])) << endl;
 					assert(ipasir_val(solver,get_fact_var(planPositionsToSATStates[i],s[j])) > 0);
