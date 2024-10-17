@@ -37,6 +37,8 @@ SATSearch::SATSearch(const plugins::Options &opts)
 	planLength(opts.get<int>("plan_length")),
 	lengthIteration(opts.get<int>("length_iteration")),
 	startLength(opts.get<int>("start_length")),
+	disablingThreshold(opts.get<int>("disabling_threshold")),
+	aboveThresholdGroupJoining(opts.get<bool>("join_groups_above_threshold")),
 	multiplier(opts.get<double>("multiplier"))
 	{
 
@@ -442,9 +444,9 @@ void SATSearch::initialize() {
 		}
 
 		log << "Problematic SCC of size " << s.size() << endl;
-		log << "members:";
-		for (int d : sset) log << d << " ";
-		log << endl;
+		//log << "members:";
+		//for (int d : sset) log << d << " ";
+		//log << endl;
 		problematicSCCS++;
 		
 		thisSCC.fullComputationRequired = true;
@@ -660,7 +662,7 @@ void SATSearch::set_up_exists_step() {
 	map<FactPair,set<int>> deletingActions;
 	map<int,vector<int>> affectingLeaf;
 	for(size_t op = 0; op < task_proxy.get_operators().size(); op ++){
-		if (op % 100 == 0)
+		if (op % 1000 == 0)
 			log << "Disabling Graph Operator " << op << " of " << task_proxy.get_operators().size() << endl;
 		// leaf operators are handled differently
 		if (is_leaf_operator[op]) continue;
@@ -868,7 +870,37 @@ void SATSearch::set_up_exists_step() {
 	vector<set<int>> disabling_graph(task_proxy.get_operators().size());
 	int number_of_edges_in_disabling_graph = 0;
 	int number_refuted_edges_in_disabling_graph = 0;
+	unordered_set<int> sequentialOperators;
+	set<FactPair> thresholdFacts;
 	for (auto [fact, deleters] : deletingActions){
+		if (needingActions[fact].size() == 0) {
+			thresholdFacts.insert(fact);
+			continue;
+		}
+		int checkSize = deleters.size() * needingActions[fact].size();
+		//log << "DG " << fact << " deleter " << deleters.size() << " needers " << needingActions[fact].size() << " checks " << checkSize << endl;
+		if (checkSize > disablingThreshold){
+			thresholdFacts.insert(fact);
+			unordered_set<int> thisSequentialOperators;
+			for (int deleter : deleters){
+				sequentialOperators.insert(deleter);
+				thisSequentialOperators.insert(deleter);
+			}
+			for (int needer : needingActions[fact]){
+				sequentialOperators.insert(needer);
+				thisSequentialOperators.insert(needer);
+			}
+
+			if (aboveThresholdGroupJoining) continue;
+
+			vector<int> atMostOneGroup;
+			for (const int & op : thisSequentialOperators)
+				atMostOneGroup.push_back(op);
+			// strong constraint - at most one of these can be executed at any time.
+			decoupling_at_most_one_groups.insert(atMostOneGroup);
+
+			continue;
+		}
 		for (int deleter : deleters){
 			for (int needer : needingActions[fact]){
 				if (deleter == needer) continue;
@@ -895,13 +927,24 @@ void SATSearch::set_up_exists_step() {
 	}
 
 	log << "Generated Disabling Graph with " << number_of_edges_in_disabling_graph << " edges." << std::endl;
-	log << "Refuted " << number_refuted_edges_in_disabling_graph << " edges." << std::endl;
+	double refute_quota = double(number_refuted_edges_in_disabling_graph) / (number_of_edges_in_disabling_graph + number_refuted_edges_in_disabling_graph);
+	log << "Refuted " << number_refuted_edges_in_disabling_graph << " edges. Quota: " << fixed << setprecision(5) << refute_quota << std::endl;
+
+	log << "Due to threshold, treating " << sequentialOperators.size() << " of " << task_proxy.get_operators().size() << " operators as sequential." << endl; 
+	if (aboveThresholdGroupJoining && sequentialOperators.size()){
+		vector<int> atMostOneGroup;
+		for (const int & op : sequentialOperators)
+			atMostOneGroup.push_back(op);
+		// strong constraint - at most one of these can be executed at any time.
+		decoupling_at_most_one_groups.insert(atMostOneGroup);
+	}
 
 
 	vector<vector<int>> disabling_graph_vector(task_proxy.get_operators().size());
 	for(size_t op = 0; op < task_proxy.get_operators().size(); op++){
-		for (const int & op2 : disabling_graph[op])
+		for (const int & op2 : disabling_graph[op]){
 			disabling_graph_vector[op].push_back(op2);
+		}
 	}
 
 	// print to file
@@ -925,6 +968,7 @@ void SATSearch::set_up_exists_step() {
 	}
 
 	for (auto & [factPair, _ignore] : deletingActions){
+		if (thresholdFacts.count(factPair)) continue; // don't need to generate anything for these
 		erasingList[factPair].resize(disabling_sccs.size());
 		requiringList[factPair].resize(disabling_sccs.size());
 		for (size_t scc = 0; scc < disabling_sccs.size(); scc++){
@@ -941,6 +985,7 @@ void SATSearch::set_up_exists_step() {
 			}
 		}
 	}
+	log << "Build enabling disabling lists." << std::endl;
 }
 
 
@@ -1185,8 +1230,7 @@ SearchStatus SATSearch::step() {
 			PreconditionsProxy precs = opProxy.get_preconditions();
 			for (size_t pre = 0; pre < precs.size(); pre++){
 				FactProxy fact = precs[pre];
-				int fact_var = get_fact_var(time,fact);
-				
+
 				if (statically_true_derived_predicates.count(fact.get_variable().get_id())){
 					// this precondition is always true, ignore it.
 					if (fact.get_value()) continue;
@@ -1197,6 +1241,7 @@ SearchStatus SATSearch::step() {
 					break;
 				}
 
+				int fact_var = get_fact_var(time,fact);
 				preMap[fact.get_variable().get_id()] = fact.get_value();
 				
 				implies(solver,opvar,fact_var);

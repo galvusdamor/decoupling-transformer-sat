@@ -55,6 +55,8 @@ class SATSearch : public SearchAlgorithm {
 	double multiplier;
 	bool existsStep = true;
 	bool agressiveDecoupledExistsStep;
+	int disablingThreshold;
+	bool aboveThresholdGroupJoining;
 
 	bool forceAtLeastOneAction;
 

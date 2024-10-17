@@ -28,6 +28,14 @@ public:
             "start_length",
             "only if length_iteration != -1. Start value for C.",
             "5");
+   		add_option<int>(
+            "disabling_threshold",
+            "threshold for the size of the disabling graph. If graph becomes larger than this, make simplifying assumptions.",
+            "5000000");
+   		add_option<bool>(
+            "join_groups_above_threshold",
+            "join all groups of operators above the exists-step threshold into a single big group",
+            "true");
    		add_option<double>(
             "multiplier",
             "only if length_iteration != -1. Multiplier for C.",
