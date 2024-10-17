@@ -24,6 +24,12 @@
 using namespace std;
 
 
+extern "C" {
+
+typedef struct kissat kissat;
+unsigned kissat_import_literal (kissat * solver, int elit);
+int kissat_set_option (kissat * solver, const char *name, int new_value);
+};
 
 namespace sat_search {
 SATSearch::SATSearch(const plugins::Options &opts)
@@ -206,7 +212,7 @@ void SATSearch::initialize() {
 		}
 
 		if (number_of_true_conditions == 0){
-			log << "Found statically true derived predicate: " << task_proxy.get_variables()[eff_var].get_name() << endl; 
+			DEBUG(log << "Found statically true derived predicate: " << task_proxy.get_variables()[eff_var].get_name() << endl);
 			statically_true_derived_predicates.insert(eff_var);
 		}
 	}
@@ -999,6 +1005,11 @@ SearchStatus SATSearch::step() {
 	reset_number_of_clauses();
 	reset_number_of_clauses();
 	void* solver = ipasir_init();
+	//kissat_set_option((kissat*)solver,"autarky",0);
+	//kissat_set_option((kissat*)solver,"xors",0);
+	//kissat_set_option((kissat*)solver,"ands",0);
+	//kissat_set_option((kissat*)solver,"forward",0);
+	//kissat_set_option((kissat*)solver,"eliminate",0);
 
 	log << "Building SAT formula for plan length " << currentLength << endl;
 
@@ -1022,6 +1033,8 @@ SearchStatus SATSearch::step() {
 				numberOfAxiomLayerVariablesPerDerived[v] = 1;
 		}
 	}
+	
+	DEBUG(log << "Axiom SCC number calculated" << endl);
 
 
 	////////////// 1. Generate all base variables (actions and facts)
@@ -1043,6 +1056,7 @@ SearchStatus SATSearch::step() {
 			DEBUG(capsule.registerVariable(opvar,"op " + pad_int(op) + " @ " + pad_int(time) + " " + task_proxy.get_operators()[op].get_name()));
 		}
 	}
+	DEBUG(log << "Operator Variables Generated" << capsule.number_of_variables<< endl);
 
 	for (int time = 0; time <= currentLength; time++){
 		fact_variables[time].resize(task_proxy.get_variables().size());
@@ -1056,6 +1070,7 @@ SearchStatus SATSearch::step() {
 			}
 		}
 	}
+	DEBUG(log << "State Variables Generated" << capsule.number_of_variables<< endl);
 
 	for (int time = 0; time <= currentLength; time++){
 		axiom_variables[time].resize(task_proxy.get_variables().size());
@@ -1077,6 +1092,8 @@ SearchStatus SATSearch::step() {
 		}
 	}
 
+	DEBUG(log << "Axiom Variables generated " << capsule.number_of_variables << endl);
+
 	// 2. action effects / preconditions
 	vector<vector<vector<vector<int>>>> achieverVars(currentLength);
 	vector<vector<vector<vector<int>>>> deleterVars(currentLength);
@@ -1095,9 +1112,13 @@ SearchStatus SATSearch::step() {
 
 
 	for (int time = 0; time < currentLength; time++){
+		DEBUG(log << "=> Generating timestep " << time << " of " << currentLength << endl);
 		map<FactPair, map<set<int>,vector<int>>> conditionBuffer;
 		map<FactPair, map<set<int>, int>> conditionVariable;
 		for (size_t op = 0; op < task_proxy.get_operators().size(); op ++){
+			DEBUG(if (op && op % 100 == 0){
+				log << "Generated Operator " << op << " of " << task_proxy.get_operators().size() << endl;		
+			});
 			int opvar = operator_variables[time][op];
 			OperatorProxy opProxy = task_proxy.get_operators()[op];
 
@@ -1210,6 +1231,7 @@ SearchStatus SATSearch::step() {
 			}
 		}
 	}
+	DEBUG(log << "Frame axioms." << endl);
 	registerClauses("frame axioms");
 
 	// 4. Evaluation of axioms
@@ -1217,6 +1239,7 @@ SearchStatus SATSearch::step() {
 	// that are supposed to be used for preconditions
 	AxiomsProxy axioms = task_proxy.get_axioms();
 	for (int time = 0; time <= currentLength; time++){
+		DEBUG(log << "=> Generating axioms for timestep " << time << " of " << currentLength << endl);
 
 		// final value of the axioms implies their value for the next layer
 		for (size_t var = 0; var < task_proxy.get_variables().size(); var++){
@@ -1232,7 +1255,12 @@ SearchStatus SATSearch::step() {
 
 		// actual evaluation of axioms
 
+		int sccCount = 0;
 		for (AxiomSCC & scc : axiomSCCsInTopOrder){
+			DEBUG(if (sccCount && sccCount % 100 == 0){
+				log << "Generated Axiom SCC " << sccCount << " of " << axiomSCCsInTopOrder.size() << endl;
+			});
+			sccCount++;
 			set<int> sset(scc.variables.begin(), scc.variables.end());
 			if (scc.sizeOne) scc.numberOfAxiomLayers = 1;
 
@@ -1265,7 +1293,6 @@ SearchStatus SATSearch::step() {
 						registerClauses("axioms evaluation");
 
 						for (OperatorProxy opProxy : achievers_per_derived[sccvar]){
-							if (sccvar == 49) log << "Op Ax for 49" << opProxy.get_id() << endl;
 							// Effect
 							EffectsProxy effs = opProxy.get_effects();
 							assert(effs.size() == 1);
@@ -1311,8 +1338,6 @@ SearchStatus SATSearch::step() {
 							}
 
 
-							if (sccvar == 49) for (int c : conditions)
-								log << "Condition " << c << endl;
 							
 							
 							andImplies(solver,conditions,eff_fact_var);
@@ -1321,12 +1346,10 @@ SearchStatus SATSearch::step() {
 
 							assert(conditions.size() > 0);
 							if (conditions.size() == 1){
-								if (sccvar == 49) log << "Cause: " << *conditions.begin() << endl;
 								causeVariables[eff_var].push_back(*conditions.begin());
 							} else {
 								int intermediateCausation = capsule.new_variable();
 								variableCounter["axiom causation"]++;
-								if (sccvar == 49) log << "Cause: " << intermediateCausation << endl;
 								causeVariables[eff_var].push_back(intermediateCausation);
 								DEBUG(capsule.registerVariable(intermediateCausation,"ca " + pad_int(opProxy.get_id()) + " @ " + pad_int(time) + " " + pad_int(layer)));
 								for (int required : conditions)
@@ -1505,6 +1528,7 @@ SearchStatus SATSearch::step() {
 			}
 		}
 	}
+	DEBUG(log << "Axioms done. Generating init and goal." << endl);
 
 
 	// 5. Init and Goal
@@ -1612,6 +1636,7 @@ SearchStatus SATSearch::step() {
 				if (val > 0){
 					operatorsThisTime[global_action_indexing[op]] = op;
 					DEBUG(log << "time " << time << " operator " << task_proxy.get_operators()[op].get_name() << endl);
+					//log << "kisvar " << opvar << " " << kissat_import_literal((kissat*)solver,opvar) << endl;
 				}
 			}
 
