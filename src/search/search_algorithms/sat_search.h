@@ -43,6 +43,7 @@ struct AxiomSCC{
 class SATSearch : public SearchAlgorithm {
     std::shared_ptr<tasks::DecoupledRootTask> decoupledTask;
 	
+public:
 	// debugging / output configuration
 	bool logInference = false;
 	
@@ -135,7 +136,13 @@ class SATSearch : public SearchAlgorithm {
 	
 	void set_up_exists_step();
 	void set_up_single_step();
-	
+
+	// Kissat interface
+	std::map<FactPair,std::vector<std::pair<int,std::vector<FactPair>>>> addingActions;
+	int get_last_axiom_var(int time, FactPair fact);
+	int get_fact_var(int time, FactPair fact);
+
+
 protected:
     virtual void initialize() override;
     virtual SearchStatus step() override;

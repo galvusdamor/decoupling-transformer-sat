@@ -35,7 +35,7 @@ class SearchAlgorithm {
     SearchStatus status;
     bool solution_found;
     Plan plan;
-protected:
+public:
     // Hold a reference to the task implementation and pass it to objects that need it.
     const std::shared_ptr<AbstractTask> task;
     // Use task_proxy to access task information.

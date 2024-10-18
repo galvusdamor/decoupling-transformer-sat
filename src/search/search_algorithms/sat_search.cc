@@ -2,6 +2,7 @@
 #include <iomanip>
 #include <fstream>
 #include <sstream>
+#include <queue>
 
 #include "sat_search.h"
 
@@ -11,6 +12,7 @@
 
 #include "../utils/logging.h"
 #include "../utils/markup.h"
+#include "../utils/rng.h"
 
 #include "../tasks/root_task.h"
 #include "../tasks/decoupled_root_task.h"
@@ -24,11 +26,199 @@
 using namespace std;
 
 
+sat_search::SATSearch* kissatSearch;
+int kissatCurrentLength;
+utils::RandomNumberGenerator rng;
+
+struct sat_fact {
+	int sat_var;
+	int time;
+	FactPair fact;
+
+	sat_fact(FactPair p) : fact(p){}
+
+	bool operator<(const sat_fact& a) const {
+		return sat_var < a.sat_var;
+	}
+
+};
+
 extern "C" {
 
 typedef struct kissat kissat;
 unsigned kissat_import_literal (kissat * solver, int elit);
 int kissat_set_option (kissat * solver, const char *name, int new_value);
+
+
+void kissat_set_external_decision_function(unsigned (*function) (struct kissat *, int * ));
+int kissat_get_truth_of_external_var(kissat * solver, int external_var);
+
+
+sat_fact get_sat_fact_for(FactPair fact, int time, bool &isStaticallyTrue, bool &isStaticallyFalse){
+	isStaticallyTrue = false;
+	isStaticallyFalse = false;
+	sat_fact f(fact);
+	f.time = time;
+	
+	// statically true check
+	if (kissatSearch->statically_true_derived_predicates.count(fact.var) == 1){
+		if (fact.value == 1){
+			isStaticallyTrue = true;
+		} else {
+			isStaticallyFalse = true;
+		}
+		return f;
+	}
+
+	
+	if (kissatSearch->task_proxy.get_variables()[fact.var].is_derived()){
+		f.sat_var = kissatSearch->get_last_axiom_var(time,fact);
+	} else {
+		f.sat_var = kissatSearch->get_fact_var(time,fact);
+	}
+
+	return f;
+}
+
+
+
+unsigned rintanens_p(struct kissat * solver, int * made_decision){
+	//cout << "I am in FD" << endl;
+
+	set<sat_fact> inQueue;
+	queue<sat_fact> q;
+
+	GoalsProxy goals = kissatSearch->task_proxy.get_goals();
+	for (size_t i = 0; i < goals.size(); i++){
+		bool isTrue, isFalse;
+		sat_fact f = get_sat_fact_for(goals[i].get_pair(),kissatCurrentLength,isTrue,isFalse);
+		if (isTrue) continue;
+		if (isFalse) assert(false);
+
+		q.push(f);
+		inQueue.insert(f);
+	}
+
+	unordered_set<int> X;
+
+	while (q.size() && X.size() < 10){
+		sat_fact f = q.front();
+		q.pop();
+
+		// DFS style search for a supporter
+		int t = f.time - 1;
+		bool found = false;
+		do {
+			for (const auto & [op, conditions] : kissatSearch->addingActions[f.fact]){
+				//cout << "ACC " << t << " (" << kissatSearch->operator_variables.size() << ")" << endl;
+				//cout << "\t " << op << " (" << kissatSearch->operator_variables[t].size() << ")" << endl;
+				int op_var = kissatSearch->operator_variables[t][op];
+				int op_truth = kissat_get_truth_of_external_var(solver,op_var);
+				if (op_truth == 2) {
+					cout << "kissat_error on op " << op << " -> " << op_var << " is " << op_truth << endl;
+					exit(-1);
+				}
+
+				
+				if (op_truth == 1){
+					// this action is to be chosen, so all of its preconditions must be true
+					// first check if one of them is known to be false -> this can happen for conditions of conditional effects
+					vector<sat_fact> pre_facts;
+					bool oneFalse = false;
+					for (const FactPair & f : conditions){
+						bool isTrue, isFalse;
+						sat_fact sf = get_sat_fact_for(f,t,isTrue,isFalse);
+						if (isFalse){ oneFalse = true; break; }
+						if (isTrue) continue;
+						pre_facts.push_back(sf);
+					}
+					if (oneFalse) continue; // this is not the right operator
+					
+					for (const sat_fact & sf : pre_facts){
+						if (inQueue.count(sf)) continue;
+						q.push(sf);
+						inQueue.insert(sf);
+					}
+					found = true;
+					break;
+				}
+			}
+			// we found the achiever
+			if (found) break;
+			
+			// no achiever found at time t
+			bool isTrue, isFalse;
+			sat_fact sf = get_sat_fact_for(f.fact,t,isTrue,isFalse);
+			assert(isFalse == false);
+			assert(isTrue == false);
+			
+			int f_truth = kissat_get_truth_of_external_var(solver,sf.sat_var);
+			if (f_truth == 2) {
+				cout << "kissat_error on " << sf.fact.var << "=" << sf.fact.value << " -> " << sf.sat_var << " is " << f_truth << endl;
+				exit(-1);
+			}
+
+			if (f_truth == -1){
+				// try to make this fact true here
+				for (const auto & [op, conditions] : kissatSearch->addingActions[f.fact]){
+					int op_var = kissatSearch->operator_variables[t][op];
+					int op_truth = kissat_get_truth_of_external_var(solver,op_var);
+					if (op_truth == 2) {
+						cout << "kissat_error on op " << op << " -> " << op_var << " is " << op_truth << endl;
+						exit(-1);
+					}
+
+					// operator cannot be true, otherwise we would have found it before
+					if (op_truth == -1 || op_truth == -2) continue; // either false or eliminated
+					X.insert(op_var); // try to apply this operator
+
+					// this action is to be chosen, so all of its preconditions must be true
+					// first check if one of them is known to be false -> this can happen for conditions of conditional effects
+					vector<sat_fact> pre_facts;
+					bool oneFalse = false;
+					for (const FactPair & f : conditions){
+						bool isTrue, isFalse;
+						sat_fact sf = get_sat_fact_for(f,t,isTrue,isFalse);
+						if (isFalse){ oneFalse = true; break; }
+						if (isTrue) continue;
+						pre_facts.push_back(sf);
+					}
+					if (oneFalse) continue; // this is not the right operator
+					
+					for (const sat_fact & sf : pre_facts){
+						if (inQueue.count(sf)) continue;
+						q.push(sf);
+						inQueue.insert(sf);
+					}
+					found = true;
+				}
+			}
+
+			// look for the previous time step
+			t--;		
+		} while (found == false && t >= 0);
+	}
+
+	//cout << "Found " << X.size() << " facts to branch on:";
+	//for (const int & x : X) cout << " " << x;
+	//cout << endl;
+
+	if (X.size() == 0){
+		// advice is to keep truth values
+		cout << "No more advice" << endl;
+		// no decision was made
+		*made_decision = 0;
+		return 0;
+	}
+	int random = rng.random(X.size());
+	vector<int> XX(X.begin(),X.end());
+
+	*made_decision = 1;
+	return XX[random];
+}
+
+
+
 };
 
 namespace sat_search {
@@ -37,9 +227,9 @@ SATSearch::SATSearch(const plugins::Options &opts)
 	planLength(opts.get<int>("plan_length")),
 	lengthIteration(opts.get<int>("length_iteration")),
 	startLength(opts.get<int>("start_length")),
+	multiplier(opts.get<double>("multiplier")),
 	disablingThreshold(opts.get<int>("disabling_threshold")),
-	aboveThresholdGroupJoining(opts.get<bool>("join_groups_above_threshold")),
-	multiplier(opts.get<double>("multiplier"))
+	aboveThresholdGroupJoining(opts.get<bool>("join_groups_above_threshold"))
 	{
 
 	switch (opts.get<int>("encoding")){
@@ -672,10 +862,12 @@ void SATSearch::set_up_exists_step() {
 			OperatorProxy opProxy = task_proxy.get_operators()[op];
 			PreconditionsProxy precs = opProxy.get_preconditions();
 			map<int,int> preMap;
+			vector<FactPair> fullPreConditions;
 			for (size_t pre = 0; pre < precs.size(); pre++){
 				FactProxy fact = precs[pre];
 				needingActions[fact.get_pair()].insert(op);
 				preMap[fact.get_variable().get_id()] = fact.get_value();
+				fullPreConditions.push_back(fact.get_pair());
 			}
 
 			EffectsProxy effs = opProxy.get_effects();
@@ -684,11 +876,15 @@ void SATSearch::set_up_exists_step() {
 				// gather the conditions of the conditional effect 
 				EffectConditionsProxy cond = thisEff.get_conditions();
 				vector<FactPair> conditions;
+				vector<FactPair> fullConditions = fullPreConditions;
 				for (size_t i = 0; i < cond.size(); i++){
 					FactProxy condition = cond[i];
 					needingActions[condition.get_pair()].insert(op);
 					conditions.push_back(condition.get_pair());
+					fullConditions.push_back(condition.get_pair());
 				}
+				
+				addingActions[thisEff.get_fact().get_pair()].push_back({op,fullConditions});
 
 				// setting a fact to true can cause a DP to become true, which in turn means we make a precondition that it has to be false false
 				for (int & start : derived_entry_edges[thisEff.get_fact().get_pair()]){
@@ -699,10 +895,14 @@ void SATSearch::set_up_exists_step() {
 					//	maintainedFactsByOperator[op].count(FactPair(reach,0))
 					//		) continue;
 					// if we make the entry point true, any of the connected axioms might become true, so we might delete any negative precondition on it
-					for (const int & reach : posReachable)
+					for (const int & reach : posReachable){
 						deletingActions[FactPair(reach,0)].insert(op);
-					for (const int & reach : negReachable)
+						addingActions[FactPair(reach,1)].push_back({op,fullConditions});
+					}
+					for (const int & reach : negReachable){
 						deletingActions[FactPair(reach,1)].insert(op);
+						addingActions[FactPair(reach,0)].push_back({op,fullConditions});
+					}
 				}
 
 
@@ -1077,6 +1277,18 @@ int SATSearch::get_last_axiom_var(int time, FactProxy fact){
 }
 
 
+int SATSearch::get_last_axiom_var(int time, FactPair fact){
+	if (fact.value == 1)
+		return axiom_variables[time][fact.var].back();
+	else
+		return -axiom_variables[time][fact.var].back();
+}
+
+int SATSearch::get_fact_var(int time, FactPair fact){
+	return fact_variables[time][fact.var][fact.value];
+}
+
+
 void SATSearch::printVariableTruth(void* solver, sat_capsule & capsule){
 	for (int v = 1; v <= capsule.number_of_variables; v++){
 		int val = ipasir_val(solver,v);
@@ -1102,6 +1314,9 @@ SearchStatus SATSearch::step() {
 	reset_number_of_clauses();
 	reset_number_of_clauses();
 	void* solver = ipasir_init();
+
+	kissatSearch = this;
+	kissat_set_external_decision_function(rintanens_p);
 	//kissat_set_option((kissat*)solver,"autarky",0);
 	//kissat_set_option((kissat*)solver,"xors",0);
 	//kissat_set_option((kissat*)solver,"ands",0);
@@ -1768,6 +1983,7 @@ SearchStatus SATSearch::step() {
 
 
 
+	kissatCurrentLength = currentLength;
 	int solverState = ipasir_solve(solver);
 	log << "SAT solver state: " << solverState << endl;
 	if (solverState == 10){
