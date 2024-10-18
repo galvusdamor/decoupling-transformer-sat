@@ -1259,9 +1259,20 @@ SearchStatus SATSearch::step() {
 
 				// gather the conditions of the conditional effect in a set (could be a vector ...)
 				set<int> conditions;
+				bool inApplicableEffect = false;
 				EffectConditionsProxy cond = thisEff.get_conditions();
-				for (size_t i = 0; i < cond.size(); i++)
+				for (size_t i = 0; i < cond.size(); i++){
+					if (statically_true_derived_predicates.count(cond[i].get_variable().get_id())){
+						// this precondition is always true, ignore it.
+						if (cond[i].get_value()) continue;
+						// precondition is always false, to disable action
+						inApplicableEffect = true;
+						break;
+					}
 					conditions.insert(get_fact_var(time, cond[i]));
+				}
+
+				if (inApplicableEffect) continue;
 
 				int thisCausation;
 
