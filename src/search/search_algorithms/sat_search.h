@@ -58,6 +58,7 @@ public:
 	bool agressiveDecoupledExistsStep;
 	int disablingThreshold;
 	bool aboveThresholdGroupJoining;
+	bool useRintanensP;
 
 	bool forceAtLeastOneAction;
 

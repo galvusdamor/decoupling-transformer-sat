@@ -40,6 +40,10 @@ public:
             "multiplier",
             "only if length_iteration != -1. Multiplier for C.",
             "1.41");
+   		add_option<bool>(
+            "use_p",
+            "use Rintanen's p as the branching heuristic for the SAT solver. This only works in conjunction with a modified version of kissat",
+            "true");
      sat_search::add_options_to_feature(*this);
     }
 };

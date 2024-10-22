@@ -3,6 +3,7 @@
 #include <fstream>
 #include <sstream>
 #include <queue>
+#include <stack>
 
 #include "sat_search.h"
 
@@ -34,11 +35,15 @@ struct sat_fact {
 	int sat_var;
 	int time;
 	FactPair fact;
+	int priorityTime;
 
 	sat_fact(FactPair p) : fact(p){}
 
 	bool operator<(const sat_fact& a) const {
-		return sat_var < a.sat_var;
+		if (priorityTime > a.priorityTime) return true;
+		if (priorityTime < a.priorityTime) return false;
+		return fact < a.fact;
+		//return sat_var > a.sat_var;
 	}
 
 };
@@ -54,7 +59,8 @@ void kissat_set_external_decision_function(unsigned (*function) (struct kissat *
 int kissat_get_truth_of_external_var(kissat * solver, int external_var);
 
 
-sat_fact get_sat_fact_for(FactPair fact, int time, bool &isStaticallyTrue, bool &isStaticallyFalse){
+sat_fact get_sat_fact_for(struct kissat * solver,FactPair fact, int time, bool &isStaticallyTrue, bool &isStaticallyFalse){
+	assert(time >= 0); // only facts after the initial state can be branched on.
 	isStaticallyTrue = false;
 	isStaticallyFalse = false;
 	sat_fact f(fact);
@@ -77,21 +83,44 @@ sat_fact get_sat_fact_for(FactPair fact, int time, bool &isStaticallyTrue, bool 
 		f.sat_var = kissatSearch->get_fact_var(time,fact);
 	}
 
+	// compute the priority time for this fact
+	f.priorityTime = time - 1;
+	while (f.priorityTime > 0){
+		int prev_time_var = 0;
+		if (kissatSearch->task_proxy.get_variables()[fact.var].is_derived()){
+			prev_time_var = kissatSearch->get_last_axiom_var(f.priorityTime-1,fact);
+		} else {
+			prev_time_var = kissatSearch->get_fact_var(f.priorityTime-1,fact);
+		}
+	
+		int var_truth = kissat_get_truth_of_external_var(solver,prev_time_var);
+		if (var_truth == 2) {
+			cout << "kissat_error on var " << prev_time_var << " is " << var_truth << endl;
+			exit(-1);
+		}
+
+		if (var_truth != 1) break;
+
+		f.priorityTime--;
+	}
+
+
 	return f;
 }
 
 
 
 unsigned rintanens_p(struct kissat * solver, int * made_decision){
-	//cout << "I am in FD" << endl;
+	//cout << "========================================" << endl << "I am in FD" << endl;
 
 	set<sat_fact> inQueue;
-	queue<sat_fact> q;
+	priority_queue<sat_fact> q;
+	//stack<sat_fact> q;
 
 	GoalsProxy goals = kissatSearch->task_proxy.get_goals();
 	for (size_t i = 0; i < goals.size(); i++){
 		bool isTrue, isFalse;
-		sat_fact f = get_sat_fact_for(goals[i].get_pair(),kissatCurrentLength,isTrue,isFalse);
+		sat_fact f = get_sat_fact_for(solver,goals[i].get_pair(),kissatCurrentLength,isTrue,isFalse);
 		if (isTrue) continue;
 		if (isFalse) assert(false);
 
@@ -101,14 +130,18 @@ unsigned rintanens_p(struct kissat * solver, int * made_decision){
 
 	unordered_set<int> X;
 
-	while (q.size() && X.size() < 10){
-		sat_fact f = q.front();
+	int first_found_action = -1;
+
+	while (q.size() && X.size() < 1){
+		//cout << "Taking one Fact" << endl;
+		sat_fact f = q.top();
 		q.pop();
 
 		// DFS style search for a supporter
 		int t = f.time - 1;
 		bool found = false;
 		do {
+			//cout << "LOOP START FOR " << t << endl;
 			for (const auto & [op, conditions] : kissatSearch->addingActions[f.fact]){
 				//cout << "ACC " << t << " (" << kissatSearch->operator_variables.size() << ")" << endl;
 				//cout << "\t " << op << " (" << kissatSearch->operator_variables[t].size() << ")" << endl;
@@ -119,26 +152,35 @@ unsigned rintanens_p(struct kissat * solver, int * made_decision){
 					exit(-1);
 				}
 
-				
-				if (op_truth == 1){
+				// treat eliminated variables as if they would be true.
+				if (op_truth == 1 || op_truth == -2){
 					// this action is to be chosen, so all of its preconditions must be true
 					// first check if one of them is known to be false -> this can happen for conditions of conditional effects
+					
+					if (first_found_action == -1){
+						first_found_action = t;
+					} else if (t >= first_found_action){
+						// abort there and exit the loop (we'll drain the queue)
+						found = true;
+						break;
+					}
 					vector<sat_fact> pre_facts;
 					bool oneFalse = false;
 					for (const FactPair & f : conditions){
 						bool isTrue, isFalse;
-						sat_fact sf = get_sat_fact_for(f,t,isTrue,isFalse);
+						sat_fact sf = get_sat_fact_for(solver,f,t,isTrue,isFalse);
 						if (isFalse){ oneFalse = true; break; }
 						if (isTrue) continue;
 						pre_facts.push_back(sf);
 					}
 					if (oneFalse) continue; // this is not the right operator
 					
-					for (const sat_fact & sf : pre_facts){
-						if (inQueue.count(sf)) continue;
-						q.push(sf);
-						inQueue.insert(sf);
-					}
+					if (t > 0)
+						for (const sat_fact & sf : pre_facts){
+							if (inQueue.count(sf)) continue;
+							q.push(sf);
+							inQueue.insert(sf);
+						}
 					found = true;
 					break;
 				}
@@ -148,7 +190,7 @@ unsigned rintanens_p(struct kissat * solver, int * made_decision){
 			
 			// no achiever found at time t
 			bool isTrue, isFalse;
-			sat_fact sf = get_sat_fact_for(f.fact,t,isTrue,isFalse);
+			sat_fact sf = get_sat_fact_for(solver,f.fact,t,isTrue,isFalse);
 			assert(isFalse == false);
 			assert(isTrue == false);
 			
@@ -157,6 +199,14 @@ unsigned rintanens_p(struct kissat * solver, int * made_decision){
 				cout << "kissat_error on " << sf.fact.var << "=" << sf.fact.value << " -> " << sf.sat_var << " is " << f_truth << endl;
 				exit(-1);
 			}
+
+			//cout << "Truth status of this fact: " << sf.sat_var << " is " << f_truth << endl; 
+
+			// fact is true, we don't have to do anything.
+			if (f_truth == 1){
+				break;
+			}
+
 
 			if (f_truth == -1){
 				// try to make this fact true here
@@ -168,9 +218,9 @@ unsigned rintanens_p(struct kissat * solver, int * made_decision){
 						exit(-1);
 					}
 
+					//cout << "Achiever " << op << " Truth " << op_truth << endl;
 					// operator cannot be true, otherwise we would have found it before
 					if (op_truth == -1 || op_truth == -2) continue; // either false or eliminated
-					X.insert(op_var); // try to apply this operator
 
 					// this action is to be chosen, so all of its preconditions must be true
 					// first check if one of them is known to be false -> this can happen for conditions of conditional effects
@@ -178,24 +228,29 @@ unsigned rintanens_p(struct kissat * solver, int * made_decision){
 					bool oneFalse = false;
 					for (const FactPair & f : conditions){
 						bool isTrue, isFalse;
-						sat_fact sf = get_sat_fact_for(f,t,isTrue,isFalse);
+						sat_fact sf = get_sat_fact_for(solver,f,t,isTrue,isFalse);
 						if (isFalse){ oneFalse = true; break; }
 						if (isTrue) continue;
 						pre_facts.push_back(sf);
 					}
 					if (oneFalse) continue; // this is not the right operator
 					
-					for (const sat_fact & sf : pre_facts){
-						if (inQueue.count(sf)) continue;
-						q.push(sf);
-						inQueue.insert(sf);
-					}
+					X.insert(op_var); // try to apply this operator
+				
+					// searching below the precondition is only possible if this is not an action at time 0	
+					if (t > 0)
+						for (const sat_fact & sf : pre_facts){
+							if (inQueue.count(sf)) continue;
+							q.push(sf);
+							inQueue.insert(sf);
+						}
 					found = true;
 				}
 			}
 
 			// look for the previous time step
-			t--;		
+			t--;
+			//cout << "END OF LOOP " << t << " cond " << (found == false) << " and " << (t >= 0) << endl; 
 		} while (found == false && t >= 0);
 	}
 
@@ -205,7 +260,7 @@ unsigned rintanens_p(struct kissat * solver, int * made_decision){
 
 	if (X.size() == 0){
 		// advice is to keep truth values
-		cout << "No more advice" << endl;
+		//cout << "No more advice" << endl;
 		// no decision was made
 		*made_decision = 0;
 		return 0;
@@ -213,6 +268,7 @@ unsigned rintanens_p(struct kissat * solver, int * made_decision){
 	int random = rng.random(X.size());
 	vector<int> XX(X.begin(),X.end());
 
+	//exit(0);
 	*made_decision = 1;
 	return XX[random];
 }
@@ -229,7 +285,8 @@ SATSearch::SATSearch(const plugins::Options &opts)
 	startLength(opts.get<int>("start_length")),
 	multiplier(opts.get<double>("multiplier")),
 	disablingThreshold(opts.get<int>("disabling_threshold")),
-	aboveThresholdGroupJoining(opts.get<bool>("join_groups_above_threshold"))
+	aboveThresholdGroupJoining(opts.get<bool>("join_groups_above_threshold")),
+	useRintanensP(opts.get<bool>("use_p"))
 	{
 
 	switch (opts.get<int>("encoding")){
@@ -1316,7 +1373,8 @@ SearchStatus SATSearch::step() {
 	void* solver = ipasir_init();
 
 	kissatSearch = this;
-	kissat_set_external_decision_function(rintanens_p);
+	if (useRintanensP)
+		kissat_set_external_decision_function(rintanens_p);
 	//kissat_set_option((kissat*)solver,"autarky",0);
 	//kissat_set_option((kissat*)solver,"xors",0);
 	//kissat_set_option((kissat*)solver,"ands",0);
