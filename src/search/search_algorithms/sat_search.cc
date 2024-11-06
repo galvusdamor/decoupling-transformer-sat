@@ -517,13 +517,15 @@ void SATSearch::initialize() {
 
 	vector<vector<int>> initial_derived_sccs = sccs::compute_maximal_sccs(derived_implication);
 	vector<vector<int>> derived_sccs;
+	int numberDerivedPredicates = 0;
 	for (vector<int> s : initial_derived_sccs){
 		if (s.size() == 1 && !task_proxy.get_variables()[s[0]].is_derived()) continue;
 		derived_sccs.push_back(s);
+		numberDerivedPredicates += s.size();
 		//log << "SCC of size " << s.size() << endl;
 	}
 	log << "Number of SCCs " << derived_sccs.size() - statically_true_derived_predicates.size() << endl;
-
+	numberDerivedPredicates -= statically_true_derived_predicates.size();
 
 	int sizeOneSCCs = 0;
 	int impliationSCCS = 0;
@@ -532,6 +534,10 @@ void SATSearch::initialize() {
 	int oneFactSCCSInternal = 0;
 	int oneVarSCCSInternal = 0;
 	int problematicSCCS = 0;
+
+	// for output statistics
+	map<string,vector<int>> sizes;
+
 	for (vector<int> s : derived_sccs){
 		AxiomSCC thisSCC;
 		thisSCC.variables = s;
@@ -540,6 +546,7 @@ void SATSearch::initialize() {
 			sizeOneSCCs++;
 			thisSCC.sizeOne = true;
 			axiomSCCsInTopOrder.push_back(thisSCC);
+			sizes["sizeone"].push_back(s.size());
 			continue;
 		}
 		set<int> sset(s.begin(), s.end());
@@ -554,6 +561,7 @@ void SATSearch::initialize() {
 		FactProxy actualDependencyInternal(*task,0,0);
 		bool oneActualDependencyInternal = true;
 		int varDependencyInternal = -1;
+		set<int> dependentVariables;
 		for (int dp : s){
 			for (OperatorProxy opProxy : achievers_per_derived[dp]){
 				// effect
@@ -576,6 +584,7 @@ void SATSearch::initialize() {
 				FactProxy myActualDependency(*task,0,0);
 				bool myOneActualDependency = true;
 				int myVarDependency = -1;
+				
 				for (FactProxy & fact : conds){
 					if (fact.get_variable().get_id() == eff_var) continue;
 					if (fact.get_variable().is_derived() &&
@@ -592,6 +601,7 @@ void SATSearch::initialize() {
 						} else if (myActualDependency != fact){
 							myOneActualDependency = false;
 						}
+						dependentVariables.insert(fact.get_variable().get_id());
 					}
 					if (!hasActual && numDerived == 1) continue;
 					if (hasActual && numDerived == 0) continue;
@@ -643,6 +653,7 @@ void SATSearch::initialize() {
 			thisSCC.fullComputationRequired = true;
 			thisSCC.numberOfAxiomLayers = thisSCC.variables.size();
 			axiomSCCsInTopOrder.push_back(thisSCC);
+			sizes["problematic-2ante"].push_back(s.size());
 			continue;
 		}
 
@@ -651,6 +662,7 @@ void SATSearch::initialize() {
 			impliationSCCS++;
 			thisSCC.isOfImplicationType = true;
 			axiomSCCsInTopOrder.push_back(thisSCC);
+			sizes["implication"].push_back(s.size());
 			continue;
 		}
 
@@ -660,6 +672,7 @@ void SATSearch::initialize() {
 			thisSCC.isDependentOnOneVariableInternally = true;
 			thisSCC.dependingVariable = varDependencyInternal;
 			axiomSCCsInTopOrder.push_back(thisSCC);
+			sizes["onefact"].push_back(s.size());
 			continue;
 		}
 
@@ -669,6 +682,7 @@ void SATSearch::initialize() {
 			thisSCC.isDependentOnOneVariableInternally = true;
 			thisSCC.dependingVariable = varDependencyInternal;
 			axiomSCCsInTopOrder.push_back(thisSCC);
+			sizes["onefactinternal"].push_back(s.size());
 			continue;
 		}
 
@@ -678,6 +692,7 @@ void SATSearch::initialize() {
 			thisSCC.isDependentOnOneVariableInternally = true;
 			thisSCC.dependingVariable = varDependencyInternal;
 			axiomSCCsInTopOrder.push_back(thisSCC);
+			sizes["onevar"].push_back(s.size());
 			continue;
 		}
 
@@ -687,10 +702,19 @@ void SATSearch::initialize() {
 			thisSCC.isDependentOnOneVariableInternally = true;
 			thisSCC.dependingVariable = varDependencyInternal;
 			axiomSCCsInTopOrder.push_back(thisSCC);
+			sizes["onevarinternal"].push_back(s.size());
 			continue;
 		}
 
-		log << "Problematic SCC of size " << s.size() << endl;
+
+		int combiSize = 1;
+		for (const int & v : dependentVariables){
+			//log << "Var " << v << " size: " << task_proxy.get_variables()[v].get_domain_size() << endl;
+			combiSize *= task_proxy.get_variables()[v].get_domain_size();
+		}
+		log << "SCC size " << s.size() << " Dependent variables: " << dependentVariables.size() << " Combi size: " << combiSize << endl;
+
+		//log << "Problematic SCC of size " << s.size() << endl;
 		//log << "members:";
 		//for (int d : sset) log << d << " ";
 		//log << endl;
@@ -699,6 +723,7 @@ void SATSearch::initialize() {
 		thisSCC.fullComputationRequired = true;
 		thisSCC.numberOfAxiomLayers = thisSCC.variables.size();
 		axiomSCCsInTopOrder.push_back(thisSCC);
+		sizes["problematic-general"].push_back(s.size());
 	}
 	log << "Size 1 SCCS: " << sizeOneSCCs << endl;
 	log << "Implication SCCS: " << impliationSCCS << endl;
@@ -707,7 +732,43 @@ void SATSearch::initialize() {
 	log << "OneFact internal SCCS: " << oneFactSCCSInternal << endl;
 	log << "OneVar internal SCCS: " << oneVarSCCSInternal << endl;
 	log << "Other SCCS: " << problematicSCCS << endl;
+	
+	// statistics for SCCs
+	for (auto [name,ss] : sizes){
+		int minSize = task_proxy.get_variables().size(); 
+		int maxSize = 0;
+		int sumSize = 0;
+		sort(ss.begin(), ss.end());
+		int median = ss[ss.size() / 2];
+		int number = ss.size();
 
+		for (int size : ss){
+			minSize = (size < minSize)? size : minSize;
+			maxSize = (size > maxSize)? size : maxSize;
+			sumSize += size;
+		}
+
+		if (name == "sizeone"){
+			sumSize -= statically_true_derived_predicates.size(); 	
+			number -= statically_true_derived_predicates.size(); 	
+		}
+
+		if (number == 0) continue;
+		
+		log << name << " number_sccs: " << number;
+		log << " minsize: " << minSize;
+		log << " maxsize: " << maxSize;
+		log << " sumsize: " << sumSize << " percent_of_all: " <<
+			fixed << setprecision(5) << double(sumSize) / numberDerivedPredicates;
+		log << " median: " << median;
+		log << " average: " << fixed << setprecision(5) << double(sumSize) / number;
+		log << endl;
+	}
+	log << "statically_true" << " number: " << statically_true_derived_predicates.size() <<
+	   " percent_of_all: " << fixed << setprecision(5) <<
+	  	 double(statically_true_derived_predicates.size()) / 
+		 (statically_true_derived_predicates.size() + numberDerivedPredicates) << endl;
+	exit(0);
 
 
 	// pre-process the axiom SCCs that can be handled specially

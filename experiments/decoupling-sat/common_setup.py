@@ -76,8 +76,19 @@ DEFAULT_SATISFICING_SUITE = [
     'woodworking-sat08-strips', 'woodworking-sat11-strips',
     'zenotravel']
 
-DEFAULT_UNSOLVABILITY_SUITE = [
-    ""
+AXIOMS_SUITE = [
+    'airport-adl', 'appn-adl', 'blocker', 'blocks-axioms', 'fridge', 
+    'ghosh-etal-JAR-acc-cc2', 'ghosh-etal-JAR-grid-cc2', 'grid-axioms', 
+    'miconic-axioms', 'openstacks', 'openstacks-opt08-adl', 'openstacks-sat08-adl', 
+    'optical-telegraphs', 'philosophers', 'queens-horndl', 'social-planning', 
+    'sokoban-axioms', 'tpsa-horndl', 'trucks', 'vta-horndl', 'vta-roles-horndl'
+]
+
+AXIOMS_CONDEFFS_SUITE = [
+    'assembly', 'cats-horndl', 'collab-and-comm', 'drones-horndl', 'elevator-horndl', 
+    'ged1-ds1', 'ged1-ds2nd', 'miconic-fulladl', 'muddy-child', 'muddy-children', 
+    'psr-large', 'psr-middle', 'robot-horndl', 'robotConj-horndl', 'snowman-basic', 
+    'snowman-cheating', 'snowman-reachability', 'sum', 'taskassign-horndl', 'word-rooms'
 ]
 
 ATTRIBUTES = [
@@ -119,9 +130,12 @@ ATTRIBUTES = [
 
     "number_pruned_operators",
 
-    Attribute("number_wmis_leaf_candidates", absolute=False, min_wins=False, function=sum),
-
     Attribute('exhausted_search_space', absolute=True, min_wins=False),
+
+    "number_disabling_graph_sccs",
+    "length_iteration_solved",
+    "planner_time_iteration_solved",
+    "total_time_solved_iteration",
 
 ]
    
@@ -445,3 +459,27 @@ class IssueExperiment(FastDownwardExperiment):
                 make_scatter_plot(nick1, rev1, rev2, attribute, config_nick2=nick2)
 
         self.add_step(step_name, make_scatter_plots)
+
+
+def add_compress_and_delete_runs_step(exp):
+    runs_dir = exp.path
+    exp.add_step(
+        "compress-runs-dir",
+        subprocess.call,
+        [
+            "tar",
+            "-cjf",
+            f"{runs_dir[:-1] if runs_dir.endswith('/') else runs_dir}.tar.gz",
+            f"{runs_dir if runs_dir.endswith('/') else runs_dir + '/'}",
+        ],
+    )
+    exp.add_step(
+        "delete-runs-dir",
+        subprocess.call,
+        [
+            "rm",
+            "-rf",
+            runs_dir
+        ],
+    )
+
