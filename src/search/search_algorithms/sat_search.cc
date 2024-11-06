@@ -314,6 +314,7 @@ void SATSearch::initialize() {
 		FactProxy actualDependencyInternal(*task,0,0);
 		bool oneActualDependencyInternal = true;
 		int varDependencyInternal = -1;
+		set<int> dependentVariables;
 		for (int dp : s){
 			for (OperatorProxy opProxy : achievers_per_derived[dp]){
 				// effect
@@ -336,6 +337,7 @@ void SATSearch::initialize() {
 				FactProxy myActualDependency(*task,0,0);
 				bool myOneActualDependency = true;
 				int myVarDependency = -1;
+				
 				for (FactProxy & fact : conds){
 					if (fact.get_variable().get_id() == eff_var) continue;
 					if (fact.get_variable().is_derived() &&
@@ -352,6 +354,7 @@ void SATSearch::initialize() {
 						} else if (myActualDependency != fact){
 							myOneActualDependency = false;
 						}
+						dependentVariables.insert(fact.get_variable().get_id());
 					}
 					if (!hasActual && numDerived == 1) continue;
 					if (hasActual && numDerived == 0) continue;
@@ -456,6 +459,14 @@ void SATSearch::initialize() {
 			continue;
 		}
 
+
+		int combiSize = 1;
+		for (const int & v : dependentVariables){
+			//log << "Var " << v << " size: " << task_proxy.get_variables()[v].get_domain_size() << endl;
+			combiSize *= task_proxy.get_variables()[v].get_domain_size();
+		}
+		log << "SCC size " << s.size() << " Dependent variables: " << dependentVariables.size() << " Combi size: " << combiSize << endl;
+
 		//log << "Problematic SCC of size " << s.size() << endl;
 		//log << "members:";
 		//for (int d : sset) log << d << " ";
@@ -510,6 +521,8 @@ void SATSearch::initialize() {
 	   " percent_of_all: " << fixed << setprecision(5) <<
 	  	 double(statically_true_derived_predicates.size()) / 
 		 (statically_true_derived_predicates.size() + numberDerivedPredicates) << endl;
+	exit(0);
+
 
 	// pre-process the axiom SCCs that can be handled specially
 	for (AxiomSCC &scc : axiomSCCsInTopOrder){
