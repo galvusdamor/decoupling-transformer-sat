@@ -96,71 +96,8 @@ def remove_ff_configs(run):
         return False
     return run
 
-class VirtualSat:
-    def __init__(self, replace_configs, time_limit):
-        from collections import defaultdict
-        self.replace_configs = replace_configs
-        self.time_limit = time_limit
-        self.cumulative_time_per_inst = defaultdict(lambda: defaultdict(list))
-        self.planner_memory_per_inst = defaultdict(lambda: defaultdict(int))
 
-    def get_run_length_and_factoring(run):
-        alg = run["algorithm"]
-        parts = alg.split("-", 1)
-        length = int(parts[0][3:])
-        if len(parts) == 1:
-            # config is something like satXX
-            return length, ""
-        else:
-            # config is something like satXX-factoring
-            return length, parts[1]
-
-    def add_run(self, run):
-        alg = run["algorithm"]
-        if alg.startswith("sat") and alg != "sat" and not alg.startswith("sat-"):
-            length, factoring = VirtualSat.get_run_length_and_factoring(run)
-            inst = f"{run['domain']}:{run['problem']}"
-            if run["coverage"] == 1:
-                if all(solved == 0 or l > length for l, solved, _ in self.cumulative_time_per_inst[factoring][inst]):
-                    self.planner_memory_per_inst[factoring][inst] = run["planner_memory"]
-                self.cumulative_time_per_inst[factoring][inst].append((length, 1, run["planner_time"]))
-            else:
-                self.cumulative_time_per_inst[factoring][inst].append((length, 0, run["planner_wall_clock_time"]))
-        return run
-
-    def replace_config(self, run):
-        if run["algorithm"] in self.replace_configs:
-            name_parts = run['algorithm'].split('-', 1)
-            factoring = name_parts[1] if len(name_parts) > 1 else ''
-            run["algorithm"] = f"{name_parts[0][:3]}-inc-{factoring}"
-            for attr in ["coverage", "planner_time", "planner_memory", "cost", "search_time", "total_time", "memory"]:
-                # better don't show this info instead of showing wrong info
-                if attr in run:
-                    del run[attr]
-            inst = f"{run['domain']}:{run['problem']}"
-            results = sorted(self.cumulative_time_per_inst[factoring][inst])
-            sum_time = 0.0
-            coverage = 0
-            for length, solved, time in results:
-                sum_time += time
-                if solved == 1:
-                    if sum_time <= self.time_limit:
-                        length_iteration_solved = length
-                        coverage = 1
-                    break
-            if coverage == 1:
-                run["error"] = "success"
-                run["coverage"] = 1
-                run["planner_time"] = sum_time
-                run["planner_memory"] = self.planner_memory_per_inst[factoring][inst]
-                run["length_iteration_solved"] = length_iteration_solved
-            else:
-                run["error"] = "search-out-of-time"
-                run["coverage"] = 0
-        return run
-
-
-virtual_solver_filter = VirtualSat(["sat17-LP-F0.2s1M", "sat17"], 1800)
+virtual_solver_filter = filters.VirtualSat(["sat17-LP-F0.2s1M", "sat17"], 1800)
 
 factoring_filter = filters.NonDecoupledTaskFilter()
 
