@@ -127,9 +127,9 @@ public:
 
 	std::set<std::vector<int>> decoupling_at_most_one_groups;
 	
-	void exists_step_restriction(void* solver,sat_capsule & capsule, std::vector<int> & operator_variables);
+	void exists_step_restriction(void* solver,sat_capsule & capsule, std::vector<int> & operator_variables, int time);
 	void generateChain(void* solver,sat_capsule & capsule, std::vector<int> & operator_variables,
-		    const std::vector<std::pair<int, int>>& E, const std::vector<std::pair<int, int>>& R);
+		    const std::vector<std::pair<int, int>>& E, const std::vector<std::pair<int, int>>& R, int time);
 
 	
 	std::map<std::string,int> clauseCounter;

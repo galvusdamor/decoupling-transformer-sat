@@ -29,6 +29,8 @@ using namespace std;
 
 sat_search::SATSearch* kissatSearch;
 int kissatCurrentLength;
+int kissatNVar;
+bool kissatReachedFinalStage;
 utils::RandomNumberGenerator rng;
 
 struct sat_fact {
@@ -40,10 +42,11 @@ struct sat_fact {
 	sat_fact(FactPair p) : fact(p){}
 
 	bool operator<(const sat_fact& a) const {
+		// smaller time (i.e. earlier) receives higher priority and this is "greater" according to the order. 
 		if (priorityTime > a.priorityTime) return true;
 		if (priorityTime < a.priorityTime) return false;
+		// tie breaking if times are equal.
 		return fact < a.fact;
-		//return sat_var > a.sat_var;
 	}
 
 };
@@ -58,8 +61,78 @@ int kissat_set_option (kissat * solver, const char *name, int new_value);
 void kissat_set_external_decision_function(unsigned (*function) (struct kissat *, int * ));
 int kissat_get_truth_of_external_var(kissat * solver, int external_var);
 
+// declarations to make the compiler happy.
+void warn_var_removed(int var);
+int get_sat_var_for_factpair(const FactPair & fact, int time);
+int get_truth_of_fact_at_time(struct kissat * solver, const FactPair & fact, int time);
+int get_truth_of_action_at_time(struct kissat * solver, int op, int time);
 
-sat_fact get_sat_fact_for(struct kissat * solver,FactPair fact, int time, bool &isStaticallyTrue, bool &isStaticallyFalse){
+
+
+int var_removed_counter = 0;
+void warn_var_removed(int var){
+	cout << "[Warning] variable " << var << " has been eliminated." << endl;
+	var_removed_counter++;
+}
+
+
+// given a fact pair: what is the value of its sat variable. Can return values from -2 to 2
+int get_sat_var_for_factpair(const FactPair & fact, int time){
+	if (time < 0){
+		cout << "[ERROR] Trying to determine sat variable for time less than 0: " << time << endl;
+		exit(-1);
+	}
+
+	int var = 0;
+	if (kissatSearch->task_proxy.get_variables()[fact.var].is_derived()){
+		var = kissatSearch->get_last_axiom_var(time,fact);
+	} else {
+		var = kissatSearch->get_fact_var(time,fact);
+	}
+
+	return var;
+}
+
+int get_truth_of_fact_at_time(struct kissat * solver, const FactPair & fact, int time){
+	int sat_var = get_sat_var_for_factpair(fact, time);
+	int var_truth = kissat_get_truth_of_external_var(solver,sat_var);
+
+	if (var_truth == -2) warn_var_removed(sat_var);
+	if (var_truth == 2) {
+		cout << "kissat_error on var " << sat_var << " is " << var_truth << endl;
+		exit(-1);
+	}
+	return var_truth;
+}
+
+int get_truth_of_action_at_time(struct kissat * solver, int op, int time){
+	int op_var = kissatSearch->operator_variables[time][op];
+	int op_truth = kissat_get_truth_of_external_var(solver,op_var);
+	if (op_truth == -2) warn_var_removed(op_var);
+	if (op_truth == 2) {
+		cout << "kissat_error on op " << op << " -> " << op_var << " is " << op_truth << endl;
+		exit(-1);
+	}
+	return op_truth;
+}
+
+int compute_priority_time_for_fact(struct kissat * solver, const FactPair & fact, const int & time){
+	// compute the priority time for this fact
+	int priorityTime = time;
+	while (priorityTime > 0){
+		priorityTime--;
+		int var_truth = get_truth_of_fact_at_time(solver, fact, priorityTime);
+		// found latest time at which the variable is not known to be true.
+		if (var_truth != 1) break;
+	}
+	
+	return priorityTime;
+}
+
+
+
+
+sat_fact get_sat_fact_for(struct kissat * solver, FactPair fact, int time, bool &isStaticallyTrue, bool &isStaticallyFalse){
 	assert(time >= 0); // only facts after the initial state can be branched on.
 	isStaticallyTrue = false;
 	isStaticallyFalse = false;
@@ -76,50 +149,61 @@ sat_fact get_sat_fact_for(struct kissat * solver,FactPair fact, int time, bool &
 		return f;
 	}
 
-	
-	if (kissatSearch->task_proxy.get_variables()[fact.var].is_derived()){
-		f.sat_var = kissatSearch->get_last_axiom_var(time,fact);
-	} else {
-		f.sat_var = kissatSearch->get_fact_var(time,fact);
-	}
-
-	// compute the priority time for this fact
-	f.priorityTime = time - 1;
-	while (f.priorityTime > 0){
-		int prev_time_var = 0;
-		if (kissatSearch->task_proxy.get_variables()[fact.var].is_derived()){
-			prev_time_var = kissatSearch->get_last_axiom_var(f.priorityTime-1,fact);
-		} else {
-			prev_time_var = kissatSearch->get_fact_var(f.priorityTime-1,fact);
-		}
-	
-		int var_truth = kissat_get_truth_of_external_var(solver,prev_time_var);
-		if (var_truth == 2) {
-			cout << "kissat_error on var " << prev_time_var << " is " << var_truth << endl;
-			exit(-1);
-		}
-
-		if (var_truth != 1) break;
-
-		f.priorityTime--;
-	}
+	f.sat_var = get_sat_var_for_factpair(fact, time);
+	f.priorityTime = compute_priority_time_for_fact(solver, fact, time);
 
 
 	return f;
 }
 
 
+// returns true if adding was successful
+bool add_all_preconditions_of_action_to_queue(struct kissat * solver, priority_queue<sat_fact> & q, set<sat_fact> & inQueue, const std::vector<FactPair>  & conditions, int t){
+	vector<sat_fact> pre_facts;
+	bool oneFalse = false;
+	// first check if one of them is known to be false -> this can happen for conditions of conditional effects
+	for (const FactPair & f : conditions){
+		bool isTrue, isFalse;
+		sat_fact sf = get_sat_fact_for(solver,f,t,isTrue,isFalse);
+		if (isFalse){ oneFalse = true; break; }
+		if (isTrue) continue;
+		pre_facts.push_back(sf);
+	}
+	// this is not the right operator
+	if (oneFalse) return false;
 
-unsigned rintanens_p(struct kissat * solver, int * made_decision){
-	//cout << "========================================" << endl << "I am in FD" << endl;
+	// we reached the initial state, nothing to do.	
+	if (t > 0)
+		for (const sat_fact & sf : pre_facts){
+			if (inQueue.count(sf)) continue;
+			q.push(sf);
+			inQueue.insert(sf);
+		}
+	return true;
+}
+
+
+bool rintanens_p_termination(unordered_set<int> &Z, int t, int bound){
+	if (Z.size() >= 40 || t >= bound) return true;
+	return false;
+}
+
+void rintanens_p_cleanup(unordered_set<int> &Z, int t, int bound, int last){
+	if (t < bound) Z.insert(last);
+}
+
+unordered_set<int> rintanens_p_support(struct kissat * solver){
+	//cout << "========================================" << endl << "I am in FD " << var_removed_counter << endl;
 
 	set<sat_fact> inQueue;
 	priority_queue<sat_fact> q;
 	//stack<sat_fact> q;
 
+	// add all goals to the queue.
 	GoalsProxy goals = kissatSearch->task_proxy.get_goals();
 	for (size_t i = 0; i < goals.size(); i++){
 		bool isTrue, isFalse;
+		// kissatCurrentLength is the overall number of time steps, i.e. the time of the goal.
 		sat_fact f = get_sat_fact_for(solver,goals[i].get_pair(),kissatCurrentLength,isTrue,isFalse);
 		if (isTrue) continue;
 		if (isFalse) assert(false);
@@ -128,60 +212,36 @@ unsigned rintanens_p(struct kissat * solver, int * made_decision){
 		inQueue.insert(f);
 	}
 
-	unordered_set<int> X;
+	// set of sat variables that we can branch on.
+	unordered_set<int> Z;
 
-	int first_found_action = -1;
+	int first_found_action = kissatCurrentLength;
 
-	while (q.size() && X.size() < 1){
+	while (q.size()){
 		//cout << "Taking one Fact" << endl;
 		sat_fact f = q.top();
 		q.pop();
 
-		// DFS style search for a supporter
+		// search for a supporting action backwards from the goal.
 		int t = f.time - 1;
 		bool found = false;
 		do {
 			//cout << "LOOP START FOR " << t << endl;
+			//
+			// search for an action that can make the fact f true.
 			for (const auto & [op, conditions] : kissatSearch->addingActions[f.fact]){
 				//cout << "ACC " << t << " (" << kissatSearch->operator_variables.size() << ")" << endl;
 				//cout << "\t " << op << " (" << kissatSearch->operator_variables[t].size() << ")" << endl;
-				int op_var = kissatSearch->operator_variables[t][op];
-				int op_truth = kissat_get_truth_of_external_var(solver,op_var);
-				if (op_truth == 2) {
-					cout << "kissat_error on op " << op << " -> " << op_var << " is " << op_truth << endl;
-					exit(-1);
-				}
+				int op_truth = get_truth_of_action_at_time(solver,op,t);
 
-				// treat eliminated variables as if they would be true.
-				if (op_truth == 1 || op_truth == -2){
+				if (op_truth == 1){
 					// this action is to be chosen, so all of its preconditions must be true
-					// first check if one of them is known to be false -> this can happen for conditions of conditional effects
-					
-					if (first_found_action == -1){
-						first_found_action = t;
-					} else if (t >= first_found_action){
-						// abort there and exit the loop (we'll drain the queue)
-						found = true;
-						break;
-					}
-					vector<sat_fact> pre_facts;
-					bool oneFalse = false;
-					for (const FactPair & f : conditions){
-						bool isTrue, isFalse;
-						sat_fact sf = get_sat_fact_for(solver,f,t,isTrue,isFalse);
-						if (isFalse){ oneFalse = true; break; }
-						if (isTrue) continue;
-						pre_facts.push_back(sf);
-					}
-					if (oneFalse) continue; // this is not the right operator
-					
-					if (t > 0)
-						for (const sat_fact & sf : pre_facts){
-							if (inQueue.count(sf)) continue;
-							q.push(sf);
-							inQueue.insert(sf);
-						}
+					bool can_produce_fact = add_all_preconditions_of_action_to_queue(solver,q,inQueue,conditions, t);
+					if (!can_produce_fact) continue;
+					//cout << "Found true achiever action. Inserting Preconditions |q|=" << q.size() << endl;
+					// found the chosen achiever
 					found = true;
+					// only find the first action.
 					break;
 				}
 			}
@@ -189,88 +249,137 @@ unsigned rintanens_p(struct kissat * solver, int * made_decision){
 			if (found) break;
 			
 			// no achiever found at time t
-			bool isTrue, isFalse;
-			sat_fact sf = get_sat_fact_for(solver,f.fact,t,isTrue,isFalse);
-			assert(isFalse == false);
-			assert(isTrue == false);
+			int f_truth = get_truth_of_fact_at_time(solver, f.fact, t);
 			
-			int f_truth = kissat_get_truth_of_external_var(solver,sf.sat_var);
-			if (f_truth == 2) {
-				cout << "kissat_error on " << sf.fact.var << "=" << sf.fact.value << " -> " << sf.sat_var << " is " << f_truth << endl;
-				exit(-1);
-			}
-
 			//cout << "Truth status of this fact: " << sf.sat_var << " is " << f_truth << endl; 
-
-			// fact is true, we don't have to do anything.
-			if (f_truth == 1){
-				break;
-			}
-
-
 			if (f_truth == -1){
-				// try to make this fact true here
+				//cout << "Fact is false here. Branching on Achiever" << endl;
+				// fact is false at time t -> it must become true at some point after this time, so let's try to do it now!
 				for (const auto & [op, conditions] : kissatSearch->addingActions[f.fact]){
-					int op_var = kissatSearch->operator_variables[t][op];
-					int op_truth = kissat_get_truth_of_external_var(solver,op_var);
-					if (op_truth == 2) {
-						cout << "kissat_error on op " << op << " -> " << op_var << " is " << op_truth << endl;
-						exit(-1);
-					}
-
-					//cout << "Achiever " << op << " Truth " << op_truth << endl;
-					// operator cannot be true, otherwise we would have found it before
-					if (op_truth == -1 || op_truth == -2) continue; // either false or eliminated
-
-					// this action is to be chosen, so all of its preconditions must be true
-					// first check if one of them is known to be false -> this can happen for conditions of conditional effects
-					vector<sat_fact> pre_facts;
-					bool oneFalse = false;
-					for (const FactPair & f : conditions){
-						bool isTrue, isFalse;
-						sat_fact sf = get_sat_fact_for(solver,f,t,isTrue,isFalse);
-						if (isFalse){ oneFalse = true; break; }
-						if (isTrue) continue;
-						pre_facts.push_back(sf);
-					}
-					if (oneFalse) continue; // this is not the right operator
+					int op_truth = get_truth_of_action_at_time(solver, op, t);
+					// if operator is false, we cannot select it as an achiever here.
+					if (op_truth == -1) continue;
 					
-					X.insert(op_var); // try to apply this operator
-				
-					// searching below the precondition is only possible if this is not an action at time 0	
-					if (t > 0)
-						for (const sat_fact & sf : pre_facts){
-							if (inQueue.count(sf)) continue;
-							q.push(sf);
-							inQueue.insert(sf);
-						}
+					// if the variable has been eliminated, we also can't branch on it
+					if (op_truth == -2) continue;
+
+					// try to choose this action for the particular effect
+					bool can_produce_fact = add_all_preconditions_of_action_to_queue(solver,q,inQueue,conditions, t);
+					if (!can_produce_fact) continue; // effect is not realisable, so try next one
+
+					// this action may be the one we are branching on.
+					int op_var = kissatSearch->operator_variables[t][op];
+					//cout << "Insert |Z|=" << Z.size() << endl;
 					found = true;
+					// termination test
+					if (rintanens_p_termination(Z,t,first_found_action)){
+						//cout << "Terminate |Z|=" << Z.size() << " t=" << t << " first=" << first_found_action << endl;
+						rintanens_p_cleanup(Z,t,first_found_action,op_var);
+						//cout << "Cleanup |Z|=" << Z.size() << endl;
+						return Z;
+					}
+
+					Z.insert(op_var);
+					// record time of first found action.
+					if (Z.size() == 1) first_found_action = t;
+					break; // take only one of the possible achievers
 				}
+				//cout << "\tLooped over all Achievers" << endl;
+			} else if (t == 0) {
+				//cout << "Reached Init" << endl;
+				// f is true in init, so let's assume it stays true.
+				break; 
 			}
 
 			// look for the previous time step
 			t--;
-			//cout << "END OF LOOP " << t << " cond " << (found == false) << " and " << (t >= 0) << endl; 
-		} while (found == false && t >= 0);
+			//cout << "END OF LOOP " << t << " cond " << (found == false) << endl; 
+		} while (found == false);
 	}
 
-	//cout << "Found " << X.size() << " facts to branch on:";
+	return Z;
+}
+
+
+
+unsigned rintanens_p(struct kissat * solver, int * made_decision){
+	if (kissatReachedFinalStage){
+		// the only remaining variables are chain variables.
+		// it is best to set them to false
+		for (int v = kissatNVar; v >= 1; v--){
+			int truth = kissat_get_truth_of_external_var(solver,v);
+			if (truth == 0){
+				*made_decision = 1;
+				return -v;
+			}	
+		
+		}
+	}
+
+
+	unordered_set<int> Z = rintanens_p_support(solver);
+
+
+	if (var_removed_counter) cout << "Var Removed " << var_removed_counter << endl;
+
+	//cout << "Found " << Z.size() << " facts to branch on:";
 	//for (const int & x : X) cout << " " << x;
 	//cout << endl;
 
-	if (X.size() == 0){
-		// advice is to keep truth values
+	if (Z.size() == 0){
+		//cout << "Plan is causally complete." << endl;
+		// advice is to keep all truth values of facts
+		for (size_t var = 0; var < kissatSearch->task_proxy.get_variables().size(); var++){
+			if (kissatSearch->statically_true_derived_predicates.count(var)) continue;
+			VariableProxy varProxy = kissatSearch->task_proxy.get_variables()[var];
+			for (int val = 0; val < varProxy.get_domain_size(); val++){
+				FactPair f(var,val);
+				// loop from init forwards
+				bool wasTrue = false;
+				for (int t = 0; t <= kissatCurrentLength; t++){
+					int var_truth = get_truth_of_fact_at_time(solver,f,t);
+					// eliminated variables are no good
+					if (var_truth == -2) break;
+					if (var_truth == 0){
+						// try to set it to truth at previous time
+						*made_decision = 1;
+						if (wasTrue) return get_sat_var_for_factpair(f,t);
+						else return -get_sat_var_for_factpair(f,t);
+					} else if (var_truth == 1) wasTrue = true; else if (var_truth == -1) wasTrue = false;
+				}
+			}
+		}
+
+		// all state variables are set or have been eliminated
+		// set all actions to false, we don't need them
+		for (int t = 0; t < kissatCurrentLength; t++){
+			for(size_t op = 0; op < kissatSearch->task_proxy.get_operators().size(); op ++){
+				int op_truth = get_truth_of_action_at_time(solver,op,t);
+				if (op_truth == 0){
+					*made_decision = 1;
+					return -kissatSearch->operator_variables[t][op];
+				}	
+			}
+		}
+
+
+		if (var_removed_counter) cout << "Var Removed " << var_removed_counter << endl;
 		//cout << "No more advice" << endl;
 		// no decision was made
 		*made_decision = 0;
+		//exit(0);
+		kissatReachedFinalStage = true;
 		return 0;
 	}
-	int random = rng.random(X.size());
-	vector<int> XX(X.begin(),X.end());
+	//cout << "Plan is causally incomplete." << endl;
+
+
+	int random = rng.random(Z.size());
+	vector<int> ZZ(Z.begin(),Z.end());
 
 	//exit(0);
 	*made_decision = 1;
-	return XX[random];
+	return ZZ[random];
 }
 
 
@@ -768,7 +877,6 @@ void SATSearch::initialize() {
 	   " percent_of_all: " << fixed << setprecision(5) <<
 	  	 double(statically_true_derived_predicates.size()) / 
 		 (statically_true_derived_predicates.size() + numberDerivedPredicates) << endl;
-	exit(0);
 
 
 	// pre-process the axiom SCCs that can be handled specially
@@ -1306,11 +1414,13 @@ void SATSearch::set_up_exists_step() {
 	log << "Build enabling disabling lists." << std::endl;
 }
 
+int chain_number = 0;
 
 void SATSearch::generateChain(void* solver,sat_capsule & capsule,vector<int> & operator_variables,
 	const std::vector<std::pair<int, int>>& E,
-	const std::vector<std::pair<int, int>>& R){
-
+	const std::vector<std::pair<int, int>>& R,
+	int time){
+	chain_number++;
 	// generate chain variables
 	map<int,int> chainVars; // we only need them for every R.second value
 	for (const auto& [_ignore, i] : R) {
@@ -1319,22 +1429,26 @@ void SATSearch::generateChain(void* solver,sat_capsule & capsule,vector<int> & o
 		variableCounter["chain"]++;
 		// TODO don't have enough information to generate nice names here
 		// need: timestep, scc number, fact pair
-		DEBUG(capsule.registerVariable(chainVar,"chain R " + to_string(i)));
+		DEBUG(capsule.registerVariable(chainVar,"chain No " + to_string(chain_number) +  " R " + to_string(i) + " @ " + to_string(time)));
 	}
 
-	// Generate chain restriction for every SCC (f1 in Scala code)
+	// Generate chain restriction for every SCC
 	size_t rpos = 0;
 	for (const auto& [opID, i] : E) {
 		// search for the position in the R list with the next higher i value
 		while (rpos < R.size() && R[rpos].second <= i)
 			rpos++;
 
-		if (rpos < R.size())
+		if (rpos < R.size()){
 			implies(solver, operator_variables[opID], chainVars[R[rpos].second]);
+			if (rpos)
+				impliesAnd(solver, -operator_variables[opID], -chainVars[R[rpos-1].second], -chainVars[R[rpos].second]);
+			else
+				implies(solver, -operator_variables[opID], -chainVars[R[rpos].second]);
+		}
 	}
 
-
-	// Process R and generate additional clauses (f2 in Scala code)
+	// Process R and generate additional clauses
 	if (R.size() >= 2){
 		for (size_t i = 0; i < R.size() - 1; i++) {
 			implies(solver, chainVars[R[i].second], chainVars[R[i+1].second]);
@@ -1346,7 +1460,7 @@ void SATSearch::generateChain(void* solver,sat_capsule & capsule,vector<int> & o
 	}
 }
 
-void SATSearch::exists_step_restriction(void* solver,sat_capsule & capsule,vector<int> & operator_variables){
+void SATSearch::exists_step_restriction(void* solver,sat_capsule & capsule,vector<int> & operator_variables, int time){
 	// loop over all fact pairs
 	for (auto & [factPair, requiringLists] : requiringList){
 		for (size_t scc = 0; scc < requiringLists.size(); scc++){
@@ -1356,7 +1470,8 @@ void SATSearch::exists_step_restriction(void* solver,sat_capsule & capsule,vecto
 
 			// no chain to be generated
 			if (E.size() == 0 || R.size() == 0) continue;
-			generateChain(solver,capsule,operator_variables,E,R);
+			if (R.size() == 1 && E.size() == 1 && E[0].first == R[0].first) continue;
+			generateChain(solver,capsule,operator_variables,E,R, time);
 		}
 	}
 
@@ -2056,7 +2171,7 @@ SearchStatus SATSearch::step() {
 			
 		if (existsStep)
 			// exists-step gets all operator variables -- otherwise indexing is too difficult
-			exists_step_restriction(solver,capsule,operator_variables[time]);
+			exists_step_restriction(solver,capsule,operator_variables[time], time);
 		else
 			atMostOne(solver,capsule,real_operator_variables[time]);
 
@@ -2103,6 +2218,8 @@ SearchStatus SATSearch::step() {
 
 
 	kissatCurrentLength = currentLength;
+	kissatNVar = capsule.number_of_variables;
+	kissatReachedFinalStage = false;
 	int solverState = ipasir_solve(solver);
 	log << "SAT solver state: " << solverState << endl;
 	if (solverState == 10){
