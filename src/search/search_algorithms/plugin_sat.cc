@@ -44,6 +44,10 @@ public:
             "use_p",
             "use Rintanen's p as the branching heuristic for the SAT solver. This only works in conjunction with a modified version of kissat",
             "true");
+   		add_option<bool>(
+            "disable_elimination",
+            "disable the SAT solver's variable elimination techniques.",
+            "false");
      sat_search::add_options_to_feature(*this);
     }
 };

@@ -59,6 +59,7 @@ public:
 	int disablingThreshold;
 	bool aboveThresholdGroupJoining;
 	bool useRintanensP;
+	bool disableVARElimination;
 
 	bool forceAtLeastOneAction;
 

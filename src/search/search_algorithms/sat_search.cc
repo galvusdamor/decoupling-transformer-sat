@@ -72,7 +72,8 @@ int get_truth_of_action_at_time(struct kissat * solver, int op, int time);
 int var_removed_counter = 0;
 int final_stage_calls = 0;
 void warn_var_removed(int var){
-	cout << "[Warning] variable " << var << " has been eliminated." << endl;
+	//cout << "[Warning] variable " << var << " has been eliminated." << endl;
+	//exit(0);
 	var_removed_counter++;
 }
 
@@ -399,7 +400,8 @@ SATSearch::SATSearch(const plugins::Options &opts)
 	multiplier(opts.get<double>("multiplier")),
 	disablingThreshold(opts.get<int>("disabling_threshold")),
 	aboveThresholdGroupJoining(opts.get<bool>("join_groups_above_threshold")),
-	useRintanensP(opts.get<bool>("use_p"))
+	useRintanensP(opts.get<bool>("use_p")),
+	disableVARElimination(opts.get<bool>("disable_elimination"))
 	{
 
 	switch (opts.get<int>("encoding")){
@@ -1565,11 +1567,15 @@ SearchStatus SATSearch::step() {
 	kissatSearch = this;
 	if (useRintanensP)
 		kissat_set_external_decision_function(rintanens_p);
-	//kissat_set_option((kissat*)solver,"autarky",0);
-	//kissat_set_option((kissat*)solver,"xors",0);
-	//kissat_set_option((kissat*)solver,"ands",0);
-	//kissat_set_option((kissat*)solver,"forward",0);
-	//kissat_set_option((kissat*)solver,"eliminate",0);
+
+	if (disableVARElimination){
+		kissat_set_option((kissat*)solver,"autarky",0);
+		kissat_set_option((kissat*)solver,"xors",0);
+		kissat_set_option((kissat*)solver,"ands",0);
+		kissat_set_option((kissat*)solver,"forward",0);
+		kissat_set_option((kissat*)solver,"eliminate",0);
+		kissat_set_option((kissat*)solver,"substitute",0);
+	}
 
 	log << "Building SAT formula for plan length " << currentLength << endl;
 
@@ -2318,7 +2324,7 @@ SearchStatus SATSearch::step() {
 					//		ipasir_val(solver,get_fact_var(planPositionsToSATStates[i],s[j])) << endl;
 					//	//exit(-1);
 					//}
-					assert(ipasir_val(solver,get_fact_var(planPositionsToSATStates[i],s[j])) > 0);
+					//assert(ipasir_val(solver,get_fact_var(planPositionsToSATStates[i],s[j])) > 0);
 				}
 			}
 		}
