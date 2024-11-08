@@ -108,6 +108,10 @@ int get_truth_of_fact_at_time(struct kissat * solver, const FactPair & fact, int
 }
 
 int get_truth_of_action_at_time(struct kissat * solver, int op, int time){
+	assert(time >= 0);
+	assert(time < kissatSearch->operator_variables.size());
+	assert(op >= 0);
+	assert(op < kissatSearch->operator_variables[time].size());
 	int op_var = kissatSearch->operator_variables[time][op];
 	int op_truth = kissat_get_truth_of_external_var(solver,op_var);
 	if (op_truth == -2) warn_var_removed(op_var);
@@ -228,6 +232,7 @@ unordered_set<int> rintanens_p_support(struct kissat * solver){
 		int t = f.time - 1;
 		bool found = false;
 		do {
+			assert(t >= 0);
 			//cout << "LOOP START FOR " << t << endl;
 			//
 			// search for an action that can make the fact f true.
@@ -287,7 +292,9 @@ unordered_set<int> rintanens_p_support(struct kissat * solver){
 					break; // take only one of the possible achievers
 				}
 				//cout << "\tLooped over all Achievers" << endl;
-			} else if (t == 0) {
+			}
+			
+			if (t == 0) {
 				//cout << "Reached Init" << endl;
 				// f is true in init, so let's assume it stays true.
 				break; 
