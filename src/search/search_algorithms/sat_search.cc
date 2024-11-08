@@ -70,6 +70,7 @@ int get_truth_of_action_at_time(struct kissat * solver, int op, int time);
 
 
 int var_removed_counter = 0;
+int final_stage_calls = 0;
 void warn_var_removed(int var){
 	cout << "[Warning] variable " << var << " has been eliminated." << endl;
 	var_removed_counter++;
@@ -304,23 +305,25 @@ unordered_set<int> rintanens_p_support(struct kissat * solver){
 
 unsigned rintanens_p(struct kissat * solver, int * made_decision){
 	if (kissatReachedFinalStage){
-		// the only remaining variables are chain variables.
-		// it is best to set them to false
-		for (int v = kissatNVar; v >= 1; v--){
-			int truth = kissat_get_truth_of_external_var(solver,v);
-			if (truth == 0){
-				*made_decision = 1;
-				return -v;
-			}	
-		
-		}
+		*made_decision = 0;
+		return 0;
+		//// the only remaining variables are chain variables.
+		//// it is best to set them to false
+		//for (int v = kissatNVar; v >= 1; v--){
+		//	int truth = kissat_get_truth_of_external_var(solver,v);
+		//	if (truth == 0){
+		//		*made_decision = 1;
+		//		return -v;
+		//	}	
+		//
+		//}
 	}
 
 
 	unordered_set<int> Z = rintanens_p_support(solver);
 
 
-	if (var_removed_counter) cout << "Var Removed " << var_removed_counter << endl;
+	//if (var_removed_counter) cout << "Var Removed " << var_removed_counter << endl;
 
 	//cout << "Found " << Z.size() << " facts to branch on:";
 	//for (const int & x : X) cout << " " << x;
@@ -363,12 +366,13 @@ unsigned rintanens_p(struct kissat * solver, int * made_decision){
 		}
 
 
-		if (var_removed_counter) cout << "Var Removed " << var_removed_counter << endl;
+		//if (var_removed_counter) cout << "Var Removed " << var_removed_counter << endl;
 		//cout << "No more advice" << endl;
 		// no decision was made
 		*made_decision = 0;
 		//exit(0);
 		kissatReachedFinalStage = true;
+		cout << "kissat: reached final state of branching. Leaving all decisions to kissat from now on." << endl;
 		return 0;
 	}
 	//cout << "Plan is causally incomplete." << endl;
@@ -1439,13 +1443,23 @@ void SATSearch::generateChain(void* solver,sat_capsule & capsule,vector<int> & o
 		while (rpos < R.size() && R[rpos].second <= i)
 			rpos++;
 
-		if (rpos < R.size()){
-			implies(solver, operator_variables[opID], chainVars[R[rpos].second]);
-			if (rpos)
-				impliesAnd(solver, -operator_variables[opID], -chainVars[R[rpos-1].second], -chainVars[R[rpos].second]);
-			else
-				implies(solver, -operator_variables[opID], -chainVars[R[rpos].second]);
+		if (rpos < R.size()) implies(solver, operator_variables[opID], chainVars[R[rpos].second]);
+	}
+
+	// Generate negative implications in the chain for better unit propagation 
+	size_t epos = 0;
+	int priorChainVar = -1;
+	for (const auto& [opID, i] : R) {
+		vector<int> erasersInBetween;
+		if (priorChainVar != -1) erasersInBetween.push_back(priorChainVar);
+		priorChainVar = chainVars[i];
+		// search for the position in the E list 
+		while (epos < E.size() && E[epos].second < i){
+			erasersInBetween.push_back(operator_variables[E[epos].first]);
+			epos++;
 		}
+		
+		allNotImpliesNot(solver, erasersInBetween, priorChainVar);
 	}
 
 	// Process R and generate additional clauses
@@ -2220,8 +2234,12 @@ SearchStatus SATSearch::step() {
 	kissatCurrentLength = currentLength;
 	kissatNVar = capsule.number_of_variables;
 	kissatReachedFinalStage = false;
+	var_removed_counter = 0;
+	final_stage_calls = 0;
 	int solverState = ipasir_solve(solver);
 	log << "SAT solver state: " << solverState << endl;
+	log << "SAT Vars Removed: " << var_removed_counter << endl;
+	log << "SAT final stage calls: " << final_stage_calls << endl;
 	if (solverState == 10){
 		//printVariableTruth(solver,capsule);
 
@@ -2243,15 +2261,15 @@ SearchStatus SATSearch::step() {
 				int val = ipasir_val(solver,opvar);
 				if (val > 0){
 					operatorsThisTime[global_action_indexing[op]] = op;
-					DEBUG(log << "time " << time << " operator " << task_proxy.get_operators()[op].get_name() << endl);
+					//DEBUG(log << "time " << time << " operator " << task_proxy.get_operators()[op].get_name() << endl);
 					//log << "kisvar " << opvar << " " << kissat_import_literal((kissat*)solver,opvar) << endl;
 				}
 			}
 
 			// sort the operators according to their global sorting
 			for (auto & [_sortkey, op] : operatorsThisTime){
-				log << "time " << time << " sorted operator " << task_proxy.get_operators()[op].get_name() << endl;
 				plan.push_back(OperatorID(op));
+				log << "time " << time << " Event: " << plan.size() << " sorted operator " << task_proxy.get_operators()[op].get_name() << endl;
 			}
 
 			planPositionsToSATStates[plan.size()] = time + 1;
@@ -2294,8 +2312,12 @@ SearchStatus SATSearch::step() {
 			if (!existsStep || planPositionsToSATStates.count(i)){
 				for (size_t j = 0; j < s.size(); ++j){
 					if (statically_true_derived_predicates.count(s[j].get_variable().get_id())) continue;
-					//log << "State " << j << " " << s[j].get_value() << " " << get_fact_var(planPositionsToSATStates[i],s[j]) << " sat: " << 
-					//	ipasir_val(solver,get_fact_var(planPositionsToSATStates[i],s[j])) << endl;
+					//if (ipasir_val(solver,get_fact_var(planPositionsToSATStates[i],s[j])) <= 0){
+					//	log << "ERR plan step " << i << " original " << planPositionsToSATStates[i] << endl;
+					//	log << "State " << j << " " << s[j].get_value() << " " << get_fact_var(planPositionsToSATStates[i],s[j]) << " sat: " << 
+					//		ipasir_val(solver,get_fact_var(planPositionsToSATStates[i],s[j])) << endl;
+					//	//exit(-1);
+					//}
 					assert(ipasir_val(solver,get_fact_var(planPositionsToSATStates[i],s[j])) > 0);
 				}
 			}
