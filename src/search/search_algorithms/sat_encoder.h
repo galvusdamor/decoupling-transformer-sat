@@ -57,7 +57,8 @@ void andImplies(void* solver, std::set<int> i, int j);
 void atMostOne(void* solver, sat_capsule & capsule, std::vector<int> & is);
 void atLeastOne(void* solver, sat_capsule & capsule, std::vector<int> & is);
 void atMostK(void* solver, sat_capsule & capsule, int K, std::vector<int> & is);
-void notAll(void* solver, std::set<int> i);
+void notAll(void* solver, std::set<int> & i);
+void allNotImpliesNot(void* solver, std::vector<int> & i, int j);
 
 
 #endif
