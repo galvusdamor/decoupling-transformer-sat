@@ -39,6 +39,6 @@ class SATParser(Parser):
             self.add_pattern(f'avg_size_{type}_sccs',    f"KB\] {type} number_sccs: .+ minsize: .+ maxsize: .+ sumsize: .+ percent_of_all: .+ median: .+ average: (.+)", required=False, type=float)
 
         self.add_pattern('number_statically_true_dvars',     "KB\] statically_true number: (.+) percent_of_all:", required=False, type=int)
-        self.add_pattern('percentage_statically_true_dvars', "KB\] statically_true number: .+ percent_of_all: (.+)", required=False, type=float)
+        self.add_pattern('percentage_statically_true_dvars', "KB\] statically_true number: .+ percent_of_all: (\d+\.*\d*)", required=False, type=float)
 
         self.add_function(add_sat_preprocessing_time)

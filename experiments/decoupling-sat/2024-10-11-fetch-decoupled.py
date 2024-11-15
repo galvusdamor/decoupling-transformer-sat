@@ -26,14 +26,14 @@ factorings = ['LP-F0.2s1M', 'LP-L0.8s1M']
 exp = Experiment()
 
 
-exp.add_fetcher("data/2024-10-11-decoupled-baselines-eval", name='fetch-dec-baselines', merge=True)
+exp.add_fetcher("data/2024-10-11-decoupled-baselines-eval", name='fetch-dec-baselines')
 
 exp.add_fetcher("data/2024-10-11-encoding-3-eval", name='fetch-aggressive-exists', merge=True)
 
 exp.add_fetcher("data/2024-10-10-non-dec-inc-eval", name='fetch-non-decoupled-incremental', merge=True)
 
 SAT_REV = "97c52a560f5805768570cdd227f1ae3938e5f9a0"
-exp.add_fetcher("data/2024-10-04-leaf-copy-ops-eval", name='fetch-sat-non-inc', filter_algorithm=[f"{SAT_REV}-sat", f"{SAT_REV}-sat-LP-F0.2s1M-clo", f"{SAT_REV}-Esat", f"{SAT_REV}-Esat-LP-F0.2s1M-clo"], merge=True)
+exp.add_fetcher("data/2024-10-04-leaf-copy-ops-eval", name='fetch-sat-non-inc', filter_algorithm=[f"{SAT_REV}-sat", f"{SAT_REV}-Esat"], merge=True) #f"{SAT_REV}-sat-LP-F0.2s1M-clo", , f"{SAT_REV}-Esat-LP-F0.2s1M-clo"
 
 algs = [f"{SAT_REV}-{sat}{count}-{factoring}-clo" for count in range(18) for factoring in factorings for sat in ["sat", "Esat"]]
 algs += [f"{SAT_REV}-{sat}{count}-{factoring}" for count in range(18) for factoring in factorings for sat in ["sat", "Esat"]]
@@ -62,9 +62,9 @@ attributes = common_setup.ATTRIBUTES
 
 #virtual_solver_filter_mob = filters.VirtualSat(["sat17", "sat17-LP-F0.2s1M-clo", "sat17-LP-L0.8s1M-clo", "Esat17", "Esat17-LP-F0.2s1M-clo", "Esat17-LP-L0.8s1M-clo", "aEsat17-LP-F0.2s1M-clo", "aEsat17-LP-L0.8s1M-clo"], 1800, ["sat", "Esat", "aEsat"])
 
-factoring_filter_mob = filters.NonDecoupledTaskFilter(["sat1-LP-F0.2s1M-clo", "Esat-LP-F0.2s1M-clo", "blind-LP-F0.2s1M"])
+#factoring_filter_mob = filters.NonDecoupledTaskFilter(["sat1-LP-F0.2s1M-clo", "Esat-LP-F0.2s1M-clo", "blind-LP-F0.2s1M"])
 
-suffix = "inc"
+#suffix = "inc"
 
 # TODO possibly add aggressive exists step with copy op batching both regular and incremental
 #algorithms = ["blind", "blind-LP-F0.2s1M", "blind-LP-L0.8s1M", 
@@ -85,20 +85,22 @@ factoring_filter_leaf = filters.NonDecoupledTaskFilter(["sat1-LP-L0.8s1M-clo", "
 
 #exp.add_report(AbsoluteReport(attributes=attributes, filter=[filters.remove_revision, factoring_filter_leaf.add_runs, factoring_filter_leaf.filter_non_decoupled_runs, filters.filter_kissat_oom, virtual_solver_filter_leaf.add_run, virtual_solver_filter_leaf.replace_config], filter_algorithm=algorithms), outfile=f"{SCRIPT_NAME}-all-leaves.html")
 
+#virtual_solver_filter_leaf_M = filters.VirtualSat(["sat17", "sat17-LP-F0.2s1M-clo", "Esat17", "aEsat17-LP-F0.2s1M-clo"], 1800, ["sat", "Esat", "aEsat"])
+virtual_solver_filter_leaf_L = filters.VirtualSat(["sat17", "sat17-LP-L0.8s1M", "sat17-LP-L0.8s1M-clo", "Esat17", "Esat17-LP-L0.8s1M", "Esat17-LP-L0.8s1M-clo", "aEsat17-LP-L0.8s1M-clo"], 1800, ["sat", "Esat", "aEsat"])
+
+suffix = virtual_solver_filter_leaf_L.get_config_name_extension()
 
 # report with madagascar
 algorithms = ["blind",# "blind-LP-L0.8s1M", 
               "sat", "sat-LP-L0.8s1M", "sat-LP-L0.8s1M-clo", 
-              "Esat", "Esat-LP-L0.8s1M", "Esat-LP-L0.8s1M-clo", "aEsat-LP-L0.8s1M-clo",
+              "Esat", "Esat-LP-L0.8s1M", "Esat-LP-L0.8s1M-clo", "aEsat-LP-L0.8s1M", "aEsat-LP-L0.8s1M-clo",
               f"sat-{suffix}", f"sat-{suffix}-LP-L0.8s1M", f"sat-{suffix}-LP-L0.8s1M-clo",
               f"Esat-{suffix}", f"Esat-{suffix}-LP-L0.8s1M", f"Esat-{suffix}-LP-L0.8s1M-clo", f"aEsat-{suffix}-LP-L0.8s1M-clo",
-              #"MpC-seq", 
-              "MpC-RR-P0", "MpC-RR-P2", 
+              #"MpC-seq", "MpC-RR-P0", 
+              "MpC-RR-P2", 
               #"ff-pref", "ff-pref-LP-F0.2s1M", "ff-pref-LP-L0.8s1M",
               "lama-first", "dec-lama-first-L0.8s1M"]
 
-#virtual_solver_filter_leaf_M = filters.VirtualSat(["sat17", "sat17-LP-F0.2s1M-clo", "Esat17", "aEsat17-LP-F0.2s1M-clo"], 1800, ["sat", "Esat", "aEsat"])
-virtual_solver_filter_leaf_L = filters.VirtualSat(["sat17", "sat17-LP-L0.8s1M", "sat17-LP-L0.8s1M-clo", "Esat17", "Esat17-LP-L0.8s1M", "Esat17-LP-L0.8s1M-clo", "aEsat17-LP-L0.8s1M-clo"], 1800, ["sat", "Esat", "aEsat"])
 
 exp.add_report(AbsoluteReport(attributes=attributes, filter=[filters.remove_revision, filters.filter_madagascar_known_unexplained_errors, filters.filter_kissat_oom, factoring_filter_leaf.add_runs, factoring_filter_leaf.filter_non_decoupled_runs, virtual_solver_filter_leaf_L.add_run, virtual_solver_filter_leaf_L.replace_config], filter_algorithm=algorithms), outfile=f"{SCRIPT_NAME}-madagascar.html")
 
@@ -137,5 +139,5 @@ PLOT_FORMAT = "png"
 
 exp.run_steps()
 
-factoring_filter_mob.print_statistics()
+#factoring_filter_mob.print_statistics()
 factoring_filter_leaf.print_statistics()

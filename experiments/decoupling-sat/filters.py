@@ -86,7 +86,7 @@ class VirtualSat:
                     sat_prep_time = r["sat_preprocessing_time"]
                     if translate_time != -1:
                         break
-            if sat_prep_time < 0:
+            if sat_prep_time < 0: # HACK introduced because of missing parsing of sat_preprocessing_time in some experiments
                 sat_prep_time = 0.01
             assert translate_time >= 0
             assert sat_prep_time >= 0, runs
