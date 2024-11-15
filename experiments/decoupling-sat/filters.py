@@ -242,11 +242,12 @@ class VirtualSatRoundRobin:
             time_inc = 1
             max_unsolved = -1
             time_per_config = []
-            max_parallel_configs = 0 # TODO always have as many configs in parallel as fit into memory
+            max_parallel_configs = 20 # TODO always have as many configs in parallel as fit into memory
             used_memory = 0
             progress = True
 
             def update_memory_and_max_parallel_configs(used_memory, max_unsolved, max_parallel_configs, runs, memory_limit):
+                return # TODO properly parse the memory usage of the sat solver and re-introduce this
                 while used_memory <= memory_limit and max_unsolved + max_parallel_configs + 1 < len(runs):
                     max_parallel_configs += 1
                     used_memory += min(runs[max_unsolved + max_parallel_configs]["raw_memory"], memory_limit - 10)
@@ -259,11 +260,11 @@ class VirtualSatRoundRobin:
                 progress = False
                 update_memory_and_max_parallel_configs(used_memory, max_unsolved, max_parallel_configs, runs, self.memory_limit)
                 length = max_unsolved
-                while length < min(max_unsolved + 1 + max_parallel_configs, len(runs)):
+                while length + 1 < min(max_unsolved + max_parallel_configs, len(runs)):
                     length += 1
                     r = runs[length]
                     while len(time_per_config) <= length:
-                        time_per_config += [59.0] # time given to first iteration
+                        time_per_config += [10.0] # time given to first iteration
                     time_per_config[length] += time_inc
                     if time_per_config[length] >= self.time_limit_per_run + time_inc:
                         continue
@@ -277,11 +278,11 @@ class VirtualSatRoundRobin:
                     elif r["error"] == "error-search-unsolvable-incomplete":
                         if r["planner_wall_clock_time"] - time_until_search <= time_per_config[length]:
                             max_unsolved = max(max_unsolved, length)
-                            used_memory -= min(runs[length]["raw_memory"], self.memory_limit - 10)
+                            #used_memory -= min(runs[length]["raw_memory"], self.memory_limit - 10) TODO reintroduce this
                             update_memory_and_max_parallel_configs(used_memory, max_unsolved, max_parallel_configs, runs, self.memory_limit)
                     elif r["planner_wall_clock_time"] - time_until_search <= time_per_config[length]:
                         # don't increase sum_time if config ran oom or crashed faster than its time_per_config
-                        used_memory -= min(runs[length]["raw_memory"], self.memory_limit - 10)
+                        #used_memory -= min(runs[length]["raw_memory"], self.memory_limit - 10) TODO reintroduce this
                         update_memory_and_max_parallel_configs(used_memory, max_unsolved, max_parallel_configs, runs, self.memory_limit)
                         continue
                     progress = True

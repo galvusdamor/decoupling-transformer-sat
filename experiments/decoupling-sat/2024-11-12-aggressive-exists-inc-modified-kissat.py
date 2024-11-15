@@ -87,21 +87,15 @@ exp.add_fetcher(name='fetch')
 common_setup.add_compress_and_delete_runs_step(exp)
 
 
-def filter_baseline_algorithms(run):
-    alg = run["algorithm"]
-    if alg in ["blind", "blind-LP-F0.2s1M", "ff", "ff-LP-F0.2s1M"]:
-        return run
-    return False
+def rename_configs(run):
+    if "LP-L0" not in run["algorithm"]:
+        # configs which maximize number of leaves
+        return False
+    run["algorithm"] = f"{run['algorithm']}-old"
+    return run
 
-exp.add_fetcher("data/2024-09-03-fix-no-global-op-eval", name='fetch-baseline', filter=[filter_baseline_algorithms], merge=True)
 
-SAT_REV = "97c52a560f5805768570cdd227f1ae3938e5f9a0"
-exp.add_fetcher("data/2024-10-04-leaf-copy-ops-eval", name='fetch-sat', filter_algorithm=[f"{SAT_REV}-sat", f"{SAT_REV}-sat-LP-F0.2s1M", f"{SAT_REV}-Esat", f"{SAT_REV}-Esat-LP-F0.2s1M"], merge=True)
-
-# incremental sat baslines
-exp.add_fetcher("data/2024-10-10-non-dec-inc-eval", name='fetch-sat-non-decoupled', merge=True)
-
-exp.add_fetcher("data/2024-10-11-encoding-3-eval", name='fetch-exists-aggressive', merge=True)
+exp.add_fetcher("data/2024-10-14-aggressive-exists-inc-eval", name='fetch-aggressive-exists-inc', filter=[rename_configs], merge=True)
 
 
 FORMAT = "html"
@@ -110,14 +104,16 @@ FORMAT = "html"
 attributes = common_setup.ATTRIBUTES
 
 
-virtual_solver_filter_leaf = filters.VirtualSat(["aEsat17-LP-L0.8s1M-clo"], 1800, ["aEsat"])
+virtual_solver_filter_leaf = filters.VirtualSat(["aEsat17-LP-L0.8s1M-clo", "aEsat17-LP-L0.8s1M-clo-old"], 1800, ["aEsat"])
+virtual_solver_filter_leaf = filters.VirtualSatRoundRobin(["aEsat17-LP-L0.8s1M-clo", "aEsat17-LP-L0.8s1M-clo-old"], 1800, 3500, ["aEsat"])
 
 factoring_filter_leaf = filters.NonDecoupledTaskFilter()
 
 suffix = virtual_solver_filter_leaf.get_config_name_extension()
 
+exp.add_report(AbsoluteReport(attributes=attributes, filter=[filters.remove_revision, factoring_filter_leaf.add_runs, factoring_filter_leaf.filter_non_decoupled_runs, filters.filter_kissat_oom, virtual_solver_filter_leaf.add_run, virtual_solver_filter_leaf.replace_config]), outfile=f"{SCRIPT_NAME}-{suffix}-all.html")
 
-exp.add_report(AbsoluteReport(attributes=attributes, filter=[filters.remove_revision, factoring_filter_leaf.add_runs, factoring_filter_leaf.filter_non_decoupled_runs, filters.filter_kissat_oom, virtual_solver_filter_leaf.add_run, virtual_solver_filter_leaf.replace_config], filter_algorithm=[f"aEsat-{suffix}-LP-L0.8s1M-clo"]), outfile=f"{SCRIPT_NAME}-all-leaves.html")
+exp.add_report(AbsoluteReport(attributes=attributes, filter=[filters.remove_revision, factoring_filter_leaf.add_runs, factoring_filter_leaf.filter_non_decoupled_runs, filters.filter_kissat_oom, virtual_solver_filter_leaf.add_run, virtual_solver_filter_leaf.replace_config], filter_algorithm=[f"aEsat-{suffix}-LP-L0.8s1M-clo", f"aEsat-{suffix}-LP-L0.8s1M-clo-old"]), outfile=f"{SCRIPT_NAME}-{suffix}-combined.html")
 
 # SCATTER PLOTS
 

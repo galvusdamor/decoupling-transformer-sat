@@ -82,19 +82,27 @@ exp.add_fetcher(name='fetch')
 
 common_setup.add_compress_and_delete_runs_step(exp)
 
+def rename_configs(run):
+    if "Esat" not in run["algorithm"]:
+        return False
+    run["algorithm"] = f"{run['algorithm']}-old"
+    return run
+
+exp.add_fetcher("data/2024-10-10-non-dec-inc-eval", name='fetch-non-decoupled-incremental', filter=[rename_configs], merge=True)
 
 FORMAT = "html"
 
 # REPORT TABLES
 attributes = common_setup.ATTRIBUTES
 
-
-virtual_solver_filter_leaf = filters.VirtualSat(["Esat17"], 1800, ["Esat"])
+virtual_solver_filter_leaf = filters.VirtualSat(["Esat17", "Esat17-old"], 1800, ["Esat"])
+virtual_solver_filter_leaf = filters.VirtualSatRoundRobin(["Esat17", "Esat17-old"], 1800, 3500, ["Esat"])
 
 suffix = virtual_solver_filter_leaf.get_config_name_extension()
 
+exp.add_report(AbsoluteReport(attributes=attributes, filter=[filters.remove_revision, filters.filter_kissat_oom, virtual_solver_filter_leaf.add_run, virtual_solver_filter_leaf.replace_config]), outfile=f"{SCRIPT_NAME}-{suffix}-all.html")
 
-exp.add_report(AbsoluteReport(attributes=attributes, filter=[filters.remove_revision, filters.filter_kissat_oom, virtual_solver_filter_leaf.add_run, virtual_solver_filter_leaf.replace_config], filter_algorithm=[f"Esat-{suffix}"]), outfile=f"{SCRIPT_NAME}-all.html")
+exp.add_report(AbsoluteReport(attributes=attributes, filter=[filters.remove_revision, filters.filter_kissat_oom, virtual_solver_filter_leaf.add_run, virtual_solver_filter_leaf.replace_config], filter_algorithm=[f"Esat-{suffix}", f"Esat-{suffix}-old"]), outfile=f"{SCRIPT_NAME}-{suffix}-combined.html")
 
 # SCATTER PLOTS
 
