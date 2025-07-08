@@ -126,7 +126,7 @@ class VirtualSat:
                 run["planner_time"] = sum_time
                 run["total_time"] = sum_time - translate_time
                 run["length_iteration_solved"] = length_iteration_solved
-                for attr in ["cost", "planner_memory"]:
+                for attr in ["cost", "planner_memory", "plan_length"]:
                     run[attr] = solved_run[attr]
                 attributes_to_delete = ["search_time", "memory"]
                 self.cleanup_run(run, attributes_to_delete)
@@ -316,6 +316,44 @@ class VirtualSatRoundRobin:
             print(f"Max solved iteration of config {config}: {self.max_iteration_solved[config]}")
             print(f"Max planner time iteration solved of config {config}: {self.max_planner_time_iteration_solved[config]}")
             print(f"Number of Instanzes not solved overall, but by some bound for config {config}: {num_unsolved}")
+
+class PlanLengthStats:
+    def __init__(self, c1, c2):
+        self.c1 = c1
+        self.c2 = c2
+        self.plan_lengths = [defaultdict(int), defaultdict(int)]
+    def add_run(self, run):
+        if run["coverage"] == 1:
+            c = run["algorithm"]
+            if c == self.c1:
+                self.plan_lengths[0][f"{run['domain']}:{run['problem']}"] = max(1, run["plan_length"]) # we have an instance where initial state is a goal
+            elif c == self.c2:
+                self.plan_lengths[1][f"{run['domain']}:{run['problem']}"] = max(1, run["plan_length"]) # we have an instance where initial state is a goal
+        return run
+    def print_statistics(self):
+        num_probs_within_10percent = 0
+        num_probs = 0
+        min_ratio = 1.0
+        max_ratio = 0.0
+        avg_ratio = 0.0
+        for prob in self.plan_lengths[0].keys():
+            if prob in self.plan_lengths[1]:
+                num_probs += 1
+                ratio = self.plan_lengths[0][prob] / self.plan_lengths[1][prob]
+                min_ratio = min(min_ratio, ratio)
+                max_ratio = max(max_ratio, ratio)
+                avg_ratio += ratio
+                if (self.plan_lengths[0][prob] <= 20 and self.plan_lengths[1][prob] <= 20) or ratio <= 0.1:
+                    num_probs_within_10percent += 1
+        if num_probs > 0:
+            avg_ratio = avg_ratio / num_probs
+            print(f"# commonly solved problems: {num_probs}")
+            print(f"# problems in which plan length differs by at most 10%: {num_probs_within_10percent}")
+            print(f"min ratio: {min_ratio:0,.8f}")
+            print(f"max ratio: {max_ratio}")
+            print(f"average ratio: {avg_ratio}")
+        else:
+            print("No commonly solved problems for plan length comparison.")
 
 
 class NonDecoupledTaskFilter:

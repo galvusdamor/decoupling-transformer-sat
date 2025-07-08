@@ -100,6 +100,7 @@ ATTRIBUTES = [
     "expansions_until_last_jump",
     "generated",
     "memory",
+    "plan_length",
     "planner_memory",
     "planner_time",
     "run_dir",
