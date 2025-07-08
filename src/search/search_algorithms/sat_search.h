@@ -92,6 +92,10 @@ public:
 	// axiom SCCs
 	std::vector<AxiomSCC> axiomSCCsInTopOrder;
 	std::vector<std::vector<OperatorProxy>> achievers_per_derived;
+
+	
+	void all_cycles_dfs(const std::set<int> & sccset, std::set<int> & visited, std::vector<int> & stack, std::set<std::set<int>> & cycles, int & hartbeat);
+
 	
 	void printVariableTruth(void* solver, sat_capsule & capsule);
 

@@ -471,6 +471,35 @@ bool SATSearch::have_actions_unconflicting_effects(int op1_no, int op2_no){
 }
 
 
+void SATSearch::all_cycles_dfs(const std::set<int> & sccset, std::set<int> & visited, std::vector<int> & stack, std::set<std::set<int>> & cycles, int & hartbeat){
+	if (hartbeat == 0) return;
+	hartbeat--;
+	int current = stack.back();
+	if (visited.count(current)){
+		set<int> cycle {current};
+		int pos = stack.size() - 2;
+		while (stack[pos] != current){
+			cycle.insert(stack[pos]);
+			pos--;
+		}
+		//cout << "Found cycle:";
+		//for (int d : cycle) cout << " " << d;
+		//cout << endl;
+		cycles.insert(cycle);
+		return;
+	}
+
+	visited.insert(current);
+	for (const int & neighbour : derived_implication[current]){
+		if (sccset.count(neighbour) == 0) continue; // target of edge not in SCC
+		stack.push_back(neighbour);
+		all_cycles_dfs(sccset, visited, stack,cycles,hartbeat);
+		stack.pop_back();
+	}
+	visited.erase(current);
+}
+
+
 void SATSearch::initialize() {
 	log << "conducting SAT search"
 		<< " for plan length: " << (planLength==-1?"all":to_string(planLength))
@@ -769,6 +798,59 @@ void SATSearch::initialize() {
 			}
 		}
 
+
+		// debug output
+		//vector<string> outputInternal;
+		//vector<string> outputExternal;
+
+		//for (int dp : s){
+		//	for (OperatorProxy opProxy : achievers_per_derived[dp]){
+		//		// effect
+		//		EffectsProxy effs = opProxy.get_effects();
+		//		EffectProxy thisEff = effs[0];
+		//		int eff_var = thisEff.get_fact().get_variable().get_id();
+		//		// Preconditions
+		//		PreconditionsProxy precs = opProxy.get_preconditions();
+		//		vector<FactProxy> conds;
+	
+		//		for (size_t pre = 0; pre < precs.size(); pre++)
+		//			conds.push_back(precs[pre]);
+		//		
+		//		EffectConditionsProxy cond = thisEff.get_conditions();
+		//		for (size_t i = 0; i < cond.size(); i++)
+		//			conds.push_back(cond[i]);
+
+		//		vector<string> cond_strings;
+		//		bool internal = false;
+		//		for (FactProxy & fact : conds){
+		//			if (fact.get_variable().get_id() == eff_var) continue;
+		//			if (fact.get_variable().is_derived()){
+		//				if (sset.count(fact.get_variable().get_id())) internal = true;
+		//				cond_strings.push_back(to_string(fact.get_variable().get_id()));
+		//			} else {
+		//				cond_strings.push_back(to_string(fact.get_variable().get_id()) + "=" + to_string(fact.get_value()));
+		//			}
+		//		}
+		//		sort(cond_strings.begin(), cond_strings.end());
+		//		string rule = to_string(eff_var) + " <-";
+		//		for (const string & s : cond_strings)
+		//			rule += " " + s;
+		//		if (internal) outputInternal.push_back(rule);
+		//		else outputExternal.push_back(rule);
+		//	}
+		//}
+
+		//sort(outputInternal.begin(), outputInternal.end());
+		//sort(outputExternal.begin(), outputExternal.end());
+
+		//cout << "External axioms" << endl;
+		//for (const string & s: outputExternal) cout << s << endl;
+		//cout << "Internal axioms" << endl;
+		//for (const string & s: outputInternal) cout << s << endl;
+
+
+
+
 		if (twoAntecedants){
 			log << "Problematic (2 antecedants) SCC of size " << s.size() << endl;
 			problematicSCCS++;
@@ -846,6 +928,15 @@ void SATSearch::initialize() {
 		thisSCC.numberOfAxiomLayers = thisSCC.variables.size();
 		axiomSCCsInTopOrder.push_back(thisSCC);
 		sizes["problematic-general"].push_back(s.size());
+
+		//std::set<int> visited;
+		//std::vector<int> stack;
+		//stack.push_back(s[0]);
+		//set<set<int>> cycles;
+		//int hartbeat = 10000;
+		//all_cycles_dfs(sset, visited, stack, cycles, hartbeat);
+
+		//cout << "SCC has " << cycles.size() << " many cycles. Hartbeat " << hartbeat << endl;
 	}
 	log << "Size 1 SCCS: " << sizeOneSCCs << endl;
 	log << "Implication SCCS: " << impliationSCCS << endl;
@@ -854,7 +945,7 @@ void SATSearch::initialize() {
 	log << "OneFact internal SCCS: " << oneFactSCCSInternal << endl;
 	log << "OneVar internal SCCS: " << oneVarSCCSInternal << endl;
 	log << "Other SCCS: " << problematicSCCS << endl;
-	
+
 	// statistics for SCCs
 	for (auto [name,ss] : sizes){
 		int minSize = task_proxy.get_variables().size(); 
