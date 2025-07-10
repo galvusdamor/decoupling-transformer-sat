@@ -126,7 +126,7 @@ class VirtualSat:
                 run["planner_time"] = sum_time
                 run["total_time"] = sum_time - translate_time
                 run["length_iteration_solved"] = length_iteration_solved
-                for attr in ["cost", "planner_memory", "plan_length"]:
+                for attr in ["cost", "planner_memory", "plan_length", "sat_plan_steps"]:
                     run[attr] = solved_run[attr]
                 attributes_to_delete = ["search_time", "memory"]
                 self.cleanup_run(run, attributes_to_delete)

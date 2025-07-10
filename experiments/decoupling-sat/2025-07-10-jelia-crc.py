@@ -116,11 +116,19 @@ exp.add_report(AbsoluteReport(attributes=attributes, filter=[filters.remove_revi
 exp.add_report(AbsoluteReport(attributes=["coverage"], filter=[filters.remove_revision, filters.filter_kissat_oom, virtual_solver_filter.add_run, virtual_solver_filter.replace_config], filter_algorithm=coverage_configs, format="tex"),
                outfile=f"{SCRIPT_NAME}-{suffix}-coverage.tex")
 
+def compute_parallelism(run):
+    if run["coverage"] == 1 and "sat_plan_steps" in run:
+        run["parallelism"] = run["plan_length"] / run["sat_plan_steps"]
+    return run
+
+exp.add_report(AbsoluteReport(attributes=[Attribute("parallelism", function=arithmetic_mean)], filter=[filters.remove_revision, filters.filter_kissat_oom, virtual_solver_filter.add_run, virtual_solver_filter.replace_config, compute_parallelism], 
+               filter_algorithm=["Esat", f"Esat-{suffix}"]),
+               outfile=f"{SCRIPT_NAME}-{suffix}-sat-plan-steps.html")
 
 
 # SCATTER PLOTS
 
-PLOT_FORMAT = "png"
+PLOT_FORMAT = "tex"
 
 def add_actual_runtime(run):
     if run["coverage"] == 1:
@@ -134,7 +142,7 @@ for c1, c2 in [("lama-first", f"Esat-{suffix}")]:
                 attributes=[attr],
                 filter=[filters.remove_revision, virtual_solver_filter.add_run, virtual_solver_filter.replace_config, add_actual_runtime],
                 filter_algorithm=[c1, c2],
-                get_category=lambda x,y: x["domain"] if PLOT_FORMAT == "tex" else None,
+                get_category=lambda x,y: x["domain"] if PLOT_FORMAT == "png" else None,
                 format=PLOT_FORMAT,
                 show_missing=attr == "actual_runtime",
             ),

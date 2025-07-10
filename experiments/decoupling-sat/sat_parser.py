@@ -13,6 +13,11 @@ def add_sat_preprocessing_time(content, props):
     #else:
     #    assert props["error"] in ["translate-out-of-memory", "search-unsolvable-incomplete"] or "unexplained_errors" in props, content +str(props)
 
+def parse_last_sat_plan_steps(content, props):
+    matches = re.findall(r"Building SAT formula for plan length (.+)", content)
+    if matches:
+        props["sat_plan_steps"] = int(matches[-1])
+
 class SATParser(Parser):
     def __init__(self):
         Parser.__init__(self)
@@ -20,7 +25,7 @@ class SATParser(Parser):
         self.add_pattern('total_time_until_disabling_graph', '\[t=(.+)s, .+ KB\] Disabling Graph contains', required=False, type=float) # for encoding=2
         self.add_pattern('total_time_until_first_formula', '\[t=(.+)s, .+ KB\] Other SCCS:', required=False, type=float) # for encoding=0 (but also in log for encoding=2!)
 
-        self.add_pattern('sat_plan_steps', 'Building SAT formula for plan length (.+)', required=False, type=int)
+        #self.add_pattern('sat_plan_steps', 'Building SAT formula for plan length (.+)', required=False, type=int)
 
         self.add_pattern('number_sccs', 'Number of SCCs (.+)', required=False, type=int)
         self.add_pattern('number_size_1_sccs', 'Size 1 SCCS: (.+)', required=False, type=int)
@@ -43,4 +48,5 @@ class SATParser(Parser):
         self.add_pattern('number_statically_true_dvars',     "KB\] statically_true number: (.+) percent_of_all:", required=False, type=int)
         self.add_pattern('percentage_statically_true_dvars', "KB\] statically_true number: .+ percent_of_all: (\d+\.*\d*)", required=False, type=float)
 
-        self.add_function(add_sat_preprocessing_time)
+        self.add_function(add_sat_preprocessing_time)       
+        self.add_function(parse_last_sat_plan_steps)
