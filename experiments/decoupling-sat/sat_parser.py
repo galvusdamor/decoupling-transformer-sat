@@ -20,6 +20,8 @@ class SATParser(Parser):
         self.add_pattern('total_time_until_disabling_graph', '\[t=(.+)s, .+ KB\] Disabling Graph contains', required=False, type=float) # for encoding=2
         self.add_pattern('total_time_until_first_formula', '\[t=(.+)s, .+ KB\] Other SCCS:', required=False, type=float) # for encoding=0 (but also in log for encoding=2!)
 
+        self.add_pattern('sat_plan_steps', 'Building SAT formula for plan length (.+)', required=False, type=int)
+
         self.add_pattern('number_sccs', 'Number of SCCs (.+)', required=False, type=int)
         self.add_pattern('number_size_1_sccs', 'Size 1 SCCS: (.+)', required=False, type=int)
         self.add_pattern('number_implication_sccs', 'Implication SCCS: (.+)', required=False, type=int)
