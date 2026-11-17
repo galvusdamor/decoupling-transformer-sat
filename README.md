@@ -5,10 +5,15 @@ It extends [Fast Downward 23.06](https://github.com/aibasel/downward/) by planni
 
 The Kissat SAT solver is needed for running the SAT-based configurations. We used and tested Kissat in revision da2b0641996913cbc18c2e08cc3945367c395143, which is not part of this repository and can be downloaded here: https://github.com/arminbiere/kissat .
 
-Here is a short version for building the planner and running the SAT-based search with the sequential exists-step encoding:
-
+To build the planner, you need to build kissat first (i.e. clone and build it).
+Check that the build directory of kissat has a file named ``libkissat.so`` after the build.
+To then build this planner you should run:
 ``
 ./build.py -s[PATH-TO-KISSAT-LIB] --kissat
+``
+
+To run the SAT-based search with the sequential exists-step encoding:
+``
 ./fast-downward.py PROBLEM_FILE --search "sat(encoding=2)"
 ``
 
